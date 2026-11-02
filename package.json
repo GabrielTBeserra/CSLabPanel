@@ -1,0 +1,19 @@
+{
+  "name": "cshome-lab",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "CS Home Lab panel and CounterStrikeSharp integration",
+  "scripts": {
+    "dev": "npm run dev:client",
+    "dev:client": "npm --prefix client run dev",
+    "dev:server": "npm --prefix server run dev",
+    "build:client": "npm --prefix client run build",
+    "build:server": "npm --prefix server run build",
+    "build": "npm run build:client && npm run build:server",
+    "test:server": "npm --prefix server run test",
+    "test": "npm run test:server",
+    "lint": "npm --prefix client run lint",
+    "typecheck:server": "npm --prefix server run typecheck"
+  }
+}

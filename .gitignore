@@ -1,0 +1,26 @@
+# Dependencies and generated output
+**/node_modules/
+**/dist/
+**/bin/
+**/obj/
+coverage/
+
+# Local credentials and machine-specific settings
+.env*
+**/.env*
+.devin/
+
+# Runtime data, local indexes, and exports
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+index.db*
+server/data/*.json
+.fastembed_cache/
+vault/
+vaults/
+deploy-cs2-manager.tar.gz
+*.log
+.agents/
+plugin/

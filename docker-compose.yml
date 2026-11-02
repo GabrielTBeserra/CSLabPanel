@@ -1,0 +1,62 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-cshome}
+      POSTGRES_USER: ${POSTGRES_USER:-cshome_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./server
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:5173}
+      PLUGIN_TOKEN: ${PLUGIN_TOKEN:-}
+      PGHOST: postgres
+      PGPORT: 5432
+      PGDATABASE: ${POSTGRES_DB:-cshome}
+      PGUSER: ${POSTGRES_USER:-cshome_app}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    expose:
+      - "3000"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:3000/api/ready').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))
+      interval: 30s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./client
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8080:8080"
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
