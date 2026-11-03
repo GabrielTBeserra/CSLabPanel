@@ -51,6 +51,30 @@ export const buildMatchzyConfig = (
 
 type Json = Record<string, unknown>;
 
+export interface ConnectedPlayer {
+  steamId: string;
+  name: string;
+}
+
+export const parseStatusJson = (text: string): ConnectedPlayer[] | null => {
+  const start = text.indexOf("{");
+  if (start < 0) return null;
+  try {
+    const parsed = JSON.parse(text.slice(start)) as { server?: { clients?: unknown[] } };
+    const clients = Array.isArray(parsed.server?.clients) ? parsed.server.clients : [];
+    const seen = new Set<string>();
+    return clients.flatMap((raw) => {
+      const c = (raw ?? {}) as Json;
+      const steamId = String(c.steamid64 ?? "");
+      if (c.bot === true || !/^[0-9]{17}$/.test(steamId) || seen.has(steamId)) return [];
+      seen.add(steamId);
+      return [{ steamId, name: String(c.name ?? "").slice(0, 64) || `Jogador ${steamId.slice(-4)}` }];
+    });
+  } catch {
+    return null;
+  }
+};
+
 const teamOf = (value: unknown): "a" | "b" | null => (value === "team1" ? "a" : value === "team2" ? "b" : null);
 const num = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : 0);
 const obj = (value: unknown): Json => (value && typeof value === "object" ? (value as Json) : {});

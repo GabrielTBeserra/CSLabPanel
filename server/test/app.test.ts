@@ -71,6 +71,7 @@ const createDatabase = (created: CreateMatchInput[] = []): MatchStore => ({
   deleteSession: async () => undefined,
   listOnlineUsers: async () => [],
   reportServerPlayers: async () => undefined,
+  replaceServerPlayers: async () => undefined,
   listServerPlayers: async () => [],
   joinMatch: async () => undefined,
   setPlayerTeam: async () => undefined,
@@ -333,6 +334,54 @@ describe("Roles", () => {
     const superAdmin = buildAs("superadmin");
     assert.equal((await superAdmin.inject({ method: "DELETE", url: `/api/matches/${match.id}`, headers: cookie })).statusCode, 200);
     await superAdmin.close();
+  });
+
+  it("restricts the dynamic mode to the super admin", async () => {
+    const app = buildAs("admin");
+    const payload = { teamA: ["76561198000000001"], teamB: ["76561198000000002"], maps: ["de_mirage"], format: "bo1", preset: "official" };
+    assert.equal((await app.inject({ method: "POST", url: "/api/dynamic/start", headers: cookie, payload })).statusCode, 403);
+    await app.close();
+  });
+
+  it("starts a dynamic match with fixed teams and maps and loads it on the server", async () => {
+    const database = createDatabase();
+    database.findSessionUser = async () => ({ user: userWithRole("superadmin"), sessionId: "s1" });
+    const teams: [string, string][] = [];
+    const picks: string[] = [];
+    database.upsertSteamUser = async (steamId) => ({ ...userWithRole("player"), id: `user-${steamId}`, steamId, displayName: "Jogador 0001" });
+    database.setPlayerTeam = async (_, userId, team) => { teams.push([userId, team]); };
+    database.insertVeto = async (veto) => { picks.push(veto.mapName!); };
+    const commands: string[] = [];
+    const app = buildServer({
+      ...config, database, rcon: { host: "h", port: 1, password: "p" }, pluginApiUrl: "http://api",
+      sendRcon: async (_, command) => { commands.push(command); return ""; },
+    });
+    const base = { teamA: ["76561198000000001"], teamB: ["76561198000000002"], format: "bo1", preset: "official" };
+    const wrongMaps = await app.inject({ method: "POST", url: "/api/dynamic/start", headers: cookie, payload: { ...base, maps: ["de_mirage", "de_nuke"] } });
+    assert.equal(wrongMaps.statusCode, 400);
+    const overlap = await app.inject({ method: "POST", url: "/api/dynamic/start", headers: cookie, payload: { ...base, teamB: base.teamA, maps: ["de_mirage"] } });
+    assert.equal(overlap.statusCode, 400);
+    const response = await app.inject({ method: "POST", url: "/api/dynamic/start", headers: cookie, payload: { ...base, maps: ["de_mirage"] } });
+    assert.equal(response.statusCode, 201);
+    assert.equal(response.json().loading, true);
+    assert.deepEqual(teams, [["user-76561198000000001", "a"], ["user-76561198000000002", "b"]]);
+    assert.deepEqual(picks, ["de_mirage"]);
+    assert.match(commands.at(-1)!, /^matchzy_loadmatch_url /);
+    await app.close();
+  });
+
+  it("asks for confirmation before replacing a match running on the server", async () => {
+    const database = createDatabase();
+    database.findSessionUser = async () => ({ user: userWithRole("superadmin"), sessionId: "s1" });
+    database.findActiveServerMatch = async () => ({ ...match, id: "other", serverState: "live" });
+    const app = buildServer({ ...config, database });
+    const response = await app.inject({
+      method: "POST", url: "/api/dynamic/start", headers: cookie,
+      payload: { teamA: ["76561198000000001"], teamB: ["76561198000000002"], maps: ["de_mirage"], format: "bo1", preset: "quick" },
+    });
+    assert.equal(response.statusCode, 409);
+    assert.equal(response.json().error.code, "SERVER_BUSY");
+    await app.close();
   });
 
   it("lets admins shuffle a room they did not create", async () => {

@@ -8,7 +8,7 @@ import {
   type MatchStore,
   type UserRecord,
 } from "./database.js";
-import { applyMatchzyEvent, buildMatchzyConfig, seriesMaps } from "./live.js";
+import { applyMatchzyEvent, buildMatchzyConfig, parseStatusJson, seriesMaps, type ConnectedPlayer } from "./live.js";
 import { quoteArg, sendRconCommand, type RconConfig } from "./rcon.js";
 import { RealtimeBus, type RealtimeEvent } from "./realtime.js";
 
@@ -22,6 +22,7 @@ export interface ServerConfig {
   pluginApiUrl?: string;
   connectAddress?: string;
   sendRcon?: (config: RconConfig, command: string) => Promise<string>;
+  presencePollMs?: number;
 }
 
 const isStaff = (user: UserRecord) => user.role === "admin" || user.role === "superadmin";
@@ -138,7 +139,7 @@ const parseCookies = (header: string | undefined): Record<string, string> => {
 
 export const buildServer = ({
   pluginToken, adminToken, webOrigin, superAdminSteamIds = [], database = null,
-  rcon = null, pluginApiUrl = "", connectAddress = "", sendRcon = sendRconCommand,
+  rcon = null, pluginApiUrl = "", connectAddress = "", sendRcon = sendRconCommand, presencePollMs = 0,
 }: ServerConfig) => {
   const app = Fastify({ bodyLimit: 8192 });
   const secureCookie = webOrigin.startsWith("https:");
@@ -152,6 +153,36 @@ export const buildServer = ({
     }
     if (!isAuthorized(request.headers.authorization, pluginToken)) return reply.code(401).send(unauthorized);
   };
+
+  let connectedPlayers: ConnectedPlayer[] = [];
+  let presenceKey = "";
+  const pollServerPresence = async () => {
+    if (!rcon) return;
+    const players = parseStatusJson(await sendRcon(rcon, "status_json"));
+    if (!players) return;
+    connectedPlayers = players;
+    const key = players.map((p) => `${p.steamId}:${p.name}`).sort().join("|");
+    if (database) await database.replaceServerPlayers(players);
+    if (key !== presenceKey) {
+      presenceKey = key;
+      publish({ type: "presence" });
+    }
+  };
+  if (presencePollMs > 0) {
+    let timer: NodeJS.Timeout | undefined;
+    let polling = false;
+    app.addHook("onReady", async () => {
+      timer = setInterval(() => {
+        if (polling) return;
+        polling = true;
+        void pollServerPresence()
+          .catch((error) => app.log.debug({ errorName: error instanceof Error ? error.name : "UnknownError" }, "Presence poll failed"))
+          .finally(() => { polling = false; });
+      }, presencePollMs);
+      timer.unref();
+    });
+    app.addHook("onClose", async () => clearInterval(timer));
+  }
 
   const loadOnServer = async (match: MatchRecord): Promise<{ ok: boolean; error?: string }> => {
     if (!database) return { ok: false, error: "Database unavailable" };
@@ -509,6 +540,117 @@ export const buildServer = ({
     publishMatch(id);
     return { ended: true };
   });
+
+  const requireSuperAdmin = async (request: FastifyRequest, reply: FastifyReply) => {
+    await requireUser(request, reply);
+    if (reply.sent) return;
+    if (request.currentUser!.role !== "superadmin") return reply.code(403).send(forbidden);
+  };
+
+  app.get("/api/dynamic/players", { onRequest: requireSuperAdmin }, async (_, reply) => {
+    if (!database) return reply.code(503).send(databaseUnavailable);
+    if (!rcon) return reply.code(503).send({ error: { code: "SERVER_NOT_CONFIGURED", message: "CS2 server integration unavailable" } });
+    await pollServerPresence().catch(() => undefined);
+    const [users, active] = await Promise.all([
+      Promise.all(connectedPlayers.map((p) => database.findUserBySteamId(p.steamId))),
+      database.findActiveServerMatch(),
+    ]);
+    return {
+      players: connectedPlayers.map((p, i) => ({ ...p, avatarUrl: users[i]?.avatarUrl ?? null, registered: Boolean(users[i]) })),
+      activeMatch: active ? { id: active.id, name: active.name, serverState: active.serverState } : null,
+    };
+  });
+
+  const steamIdList = { type: "array", minItems: 1, maxItems: 10, uniqueItems: true, items: { type: "string", pattern: "^[0-9]{17}$" } } as const;
+
+  app.post(
+    "/api/dynamic/start",
+    {
+      onRequest: requireSuperAdmin,
+      schema: {
+        body: {
+          type: "object",
+          additionalProperties: false,
+          required: ["teamA", "teamB", "maps", "format", "preset"],
+          properties: {
+            name: { type: "string", minLength: 1, maxLength: 80 },
+            teamAName: { type: "string", minLength: 1, maxLength: 64 },
+            teamBName: { type: "string", minLength: 1, maxLength: 64 },
+            teamA: steamIdList,
+            teamB: steamIdList,
+            maps: { type: "array", minItems: 1, maxItems: 3, uniqueItems: true, items: { type: "string", pattern: "^de_[a-z0-9_]+$" } },
+            format: { type: "string", enum: ["bo1", "bo3"] },
+            preset: matchSchema.properties.preset,
+            maxRounds: matchSchema.properties.maxRounds,
+            knifeRound: { type: "boolean" },
+            overtime: { type: "boolean" },
+            overtimeRounds: matchSchema.properties.overtimeRounds,
+            playout: { type: "boolean" },
+            force: { type: "boolean" },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!database) return reply.code(503).send(databaseUnavailable);
+      const body = request.body as {
+        name?: string; teamAName?: string; teamBName?: string; teamA: string[]; teamB: string[]; maps: string[];
+        format: "bo1" | "bo3"; preset: NonNullable<CreateMatchInput["preset"]>; maxRounds?: number; knifeRound?: boolean;
+        overtime?: boolean; overtimeRounds?: number; playout?: boolean; force?: boolean;
+      };
+      if (body.teamA.some((id) => body.teamB.includes(id))) {
+        return reply.code(400).send({ error: { code: "PLAYER_IN_BOTH_TEAMS", message: "A player cannot be on both teams" } });
+      }
+      if (body.maps.length !== (body.format === "bo3" ? 3 : 1)) {
+        return reply.code(400).send({ error: { code: "INVALID_MAPS", message: "Pick 1 map for MD1 or 3 maps for MD3" } });
+      }
+      const active = await database.findActiveServerMatch();
+      if (active && !body.force) {
+        return reply.code(409).send({ error: { code: "SERVER_BUSY", message: `Server busy with "${active.name}"` } });
+      }
+      if (active) {
+        if (rcon) await sendRcon(rcon, "css_endmatch").catch(() => undefined);
+        await database.setServerState(active.id, "finished");
+        await database.setMatchPhase(active.id, "finished");
+        publishMatch(active.id);
+      }
+
+      const teamAName = body.teamAName ?? "Time A";
+      const teamBName = body.teamBName ?? "Time B";
+      const input = resolveMatchInput({
+        name: body.name ?? `Dinâmico ${new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", timeZone: "America/Sao_Paulo" })}`,
+        mapName: body.maps[0]!, teamAName, teamBName, maxRounds: body.maxRounds ?? 24, format: body.format, mapPool: body.maps,
+        preset: body.preset,
+        ...(body.knifeRound !== undefined ? { knifeRound: body.knifeRound } : {}),
+        ...(body.overtime !== undefined ? { overtime: body.overtime } : {}),
+        ...(body.overtimeRounds !== undefined ? { overtimeRounds: body.overtimeRounds } : {}),
+        ...(body.playout !== undefined ? { playout: body.playout } : {}),
+      });
+      const admin = request.currentUser!;
+      const match = await database.createMatch({ ...input, createdBy: admin.id });
+      const names = new Map(connectedPlayers.map((p) => [p.steamId, p.name]));
+      for (const [team, ids] of [["a", body.teamA], ["b", body.teamB]] as const) {
+        for (const steamId of ids) {
+          const user = await database.upsertSteamUser(steamId);
+          const inGame = names.get(steamId);
+          if (inGame && user.displayName.startsWith("Jogador ")) await database.updateUserProfile(steamId, inGame, user.avatarUrl);
+          await database.joinMatch(match.id, user.id);
+          await database.setPlayerTeam(match.id, user.id, team);
+        }
+      }
+      for (const [i, mapName] of body.maps.entries()) {
+        await database.insertVeto({
+          matchId: match.id, seq: i + 1, action: "pick", mapName, team: null, actorSteamId: admin.steamId, actorName: "Decider",
+        });
+      }
+      if (!input.knifeRound) await database.setMatchSide(match.id, "a");
+      await database.setMatchPhase(match.id, "live");
+      const created = await database.getMatchById(match.id);
+      const result = created ? await loadOnServer(created) : { ok: false, error: "Match not found" };
+      publishMatch(match.id);
+      return reply.code(201).send({ matchId: match.id, loading: result.ok, error: result.error ?? null });
+    },
+  );
 
   app.delete("/api/matches/:id", { onRequest: requireStaff }, async (request, reply) => {
     if (!database) return reply.code(503).send(databaseUnavailable);

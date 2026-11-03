@@ -693,6 +693,64 @@ a:focus-visible {
   color: var(--chakra-colors-signal);
   letter-spacing: 0.06em;
 }
+.slot-btn {
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--chakra-colors-line);
+  border-radius: 6px;
+  background: rgba(10, 14, 19, 0.6);
+  color: var(--chakra-colors-muted);
+  cursor: pointer;
+  font-family: var(--chakra-fonts-mono);
+  font-weight: 700;
+  transition: background 140ms ease, color 140ms ease, border-color 140ms ease, transform 120ms ease;
+}
+.slot-btn:active {
+  transform: scale(0.92);
+}
+.slot-btn.is-a:hover,
+.slot-btn.is-a.is-on {
+  border-color: var(--chakra-colors-ct);
+  color: var(--chakra-colors-ct);
+}
+.slot-btn.is-b:hover,
+.slot-btn.is-b.is-on {
+  border-color: var(--chakra-colors-t);
+  color: var(--chakra-colors-t);
+}
+.slot-btn.is-a.is-on {
+  background: rgba(90, 169, 255, 0.2);
+}
+.slot-btn.is-b.is-on {
+  background: rgba(245, 184, 61, 0.2);
+}
+.dyn-player.in-a {
+  border-color: rgba(90, 169, 255, 0.45);
+}
+.dyn-player.in-b {
+  border-color: rgba(245, 184, 61, 0.45);
+}
+.team-name-input {
+  width: 100%;
+  margin-top: 0.35rem;
+  padding: 0.35rem 0;
+  border: 0;
+  border-bottom: 1px solid var(--chakra-colors-line);
+  background: transparent;
+  color: var(--chakra-colors-text);
+  font-size: 1.15rem;
+  font-weight: 700;
+  outline: none;
+}
+.team-name-input:focus {
+  border-bottom-color: var(--chakra-colors-signal);
+}
+.format-card {
+  flex: 1;
+}
+.dyn-summary {
+  border-color: rgba(255, 159, 28, 0.35);
+}
 .toggle-field {
   display: flex;
   align-items: center;

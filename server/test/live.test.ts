@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { resolveMatchInput, vetoSteps } from "../src/app.js";
 import type { MatchPlayerRecord, MatchRecord, VetoRecord } from "../src/database.js";
-import { applyMatchzyEvent, buildMatchzyConfig } from "../src/live.js";
+import { applyMatchzyEvent, buildMatchzyConfig, parseStatusJson } from "../src/live.js";
 
 const match = {
   id: "m1", name: "Mix", mapName: "de_mirage", teamAName: "Alpha", teamBName: "Bravo", maxRounds: 24,
@@ -64,6 +64,21 @@ describe("MatchZy integration", () => {
     assert.equal(r.state, "paused");
     r = applyMatchzyEvent(r.live, r.state, { event: "series_end", team1_series_score: 1, team2_series_score: 0, winner: { team: "team1" } }, team);
     assert.deepEqual([r.state, r.live.winner, r.seriesFinished], ["finished", "a", true]);
+  });
+
+  it("reads connected humans from status_json, ignoring bots and empty slots", () => {
+    const text = JSON.stringify({
+      server: {
+        clients: [
+          { steamid64: "76561198142791297", name: "MANO URSO", bot: false },
+          { steamid64: "0", steamid: "[I:0:0]", name: "", bot: false },
+          { steamid64: "90000000000000001", name: "BOT Kim", bot: true },
+          { steamid64: "76561198142791297", name: "dup", bot: false },
+        ],
+      },
+    });
+    assert.deepEqual(parseStatusJson(`junk ${text}`), [{ steamId: "76561198142791297", name: "MANO URSO" }]);
+    assert.equal(parseStatusJson("Unknown command"), null);
   });
 
   it("enforces preset rules on the server and keeps custom values", () => {

@@ -224,6 +224,36 @@ export const loadMatchOnServer = (matchId: string) =>
 export const endMatchOnServer = (matchId: string) =>
   request<{ ended: boolean }>(`/matches/${matchId}/server/end`, { method: "POST" });
 
+export interface DynamicPlayer {
+  steamId: string;
+  name: string;
+  avatarUrl: string | null;
+  registered: boolean;
+}
+
+export interface DynamicStartInput {
+  name?: string;
+  teamAName: string;
+  teamBName: string;
+  teamA: string[];
+  teamB: string[];
+  maps: string[];
+  format: MatchFormat;
+  preset: MatchPreset;
+  maxRounds: number;
+  knifeRound: boolean;
+  overtime: boolean;
+  overtimeRounds: number;
+  playout: boolean;
+  force?: boolean;
+}
+
+export const getDynamicPlayers = (signal?: AbortSignal) =>
+  request<{ players: DynamicPlayer[]; activeMatch: { id: string; name: string; serverState: ServerState } | null }>("/dynamic/players", { signal });
+
+export const startDynamicMatch = (input: DynamicStartInput) =>
+  request<{ matchId: string; loading: boolean; error: string | null }>("/dynamic/start", { method: "POST", body: JSON.stringify(input) });
+
 export const subscribeRealtime = (onEvent: (event: RealtimeEvent) => void, onStatus?: (connected: boolean) => void) => {
   const source = new EventSource(`${apiBaseUrl}/stream`, { withCredentials: true });
   source.onopen = () => onStatus?.(true);

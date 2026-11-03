@@ -176,6 +176,7 @@ export interface MatchStore {
   deleteSession(tokenHash: string): Promise<void>;
   listOnlineUsers(withinSeconds: number): Promise<PresenceEntry[]>;
   reportServerPlayers(players: HeartbeatPlayer[]): Promise<void>;
+  replaceServerPlayers(players: HeartbeatPlayer[]): Promise<void>;
   listServerPlayers(withinSeconds: number): Promise<PresenceEntry[]>;
   joinMatch(matchId: string, userId: string): Promise<void>;
   setPlayerTeam(matchId: string, userId: string, team: "a" | "b"): Promise<void>;
@@ -449,6 +450,11 @@ export class PostgresDatabase implements MatchStore {
       [withinSeconds],
     );
     return r.rows.map((row) => ({ steamId: row.steam_id, displayName: row.display_name, lastSeenAt: iso(row.last_seen_at) }));
+  }
+
+  async replaceServerPlayers(players: HeartbeatPlayer[]): Promise<void> {
+    await this.pool.query(`DELETE FROM server_players WHERE NOT (steam_id = ANY($1::text[]))`, [players.map((p) => p.steamId)]);
+    await this.reportServerPlayers(players);
   }
 
   async reportServerPlayers(players: HeartbeatPlayer[]): Promise<void> {

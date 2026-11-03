@@ -13,6 +13,7 @@ import {
 } from "@chakra-ui/react";
 import AdminUsers from "./AdminUsers";
 import Backdrop from "./Backdrop";
+import DynamicMatch from "./DynamicMatch";
 import Logo from "./Logo";
 import MatchRoom from "./MatchRoom";
 import { DEFAULT_POOL, MAPS, mapIcon, mapName, mapThumb } from "./maps";
@@ -388,6 +389,9 @@ export default function App() {
                 ) : null}
                 <Text fontSize="sm" fontWeight="bold">{user.displayName}</Text>
               </HStack>
+              {user.role === "superadmin" ? (
+                <Button className="primary-button" onClick={() => navigate("/dinamico")} size="xs">DINÂMICO</Button>
+              ) : null}
               {isStaff(user) ? (
                 <Button className="ghost-button" onClick={() => navigate("/admin")} size="xs">{roleLabel[user.role]}</Button>
               ) : null}
@@ -414,6 +418,8 @@ export default function App() {
         ) : (
           roomMatch ? (
             <MatchRoom matchId={roomMatch} onBack={() => navigate("/")} user={user} />
+          ) : path === "/dinamico" && user.role === "superadmin" ? (
+            <DynamicMatch onBack={() => navigate("/")} onStarted={(id) => navigate(`/match/${id}`)} />
           ) : path === "/admin" && isStaff(user) ? (
             <AdminUsers onBack={() => navigate("/")} user={user} />
           ) : (

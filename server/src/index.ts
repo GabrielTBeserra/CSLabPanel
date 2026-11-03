@@ -60,7 +60,10 @@ const rcon = process.env.CS2_RCON_HOST && process.env.CS2_RCON_PASSWORD
 const pluginApiUrl = (process.env.PLUGIN_API_URL ?? "").replace(/\/+$/, "");
 const connectAddress = process.env.CS2_CONNECT_ADDRESS ?? "";
 
-const app = buildServer({ pluginToken, adminToken, webOrigin, superAdminSteamIds, database, rcon, pluginApiUrl, connectAddress });
+const app = buildServer({
+  pluginToken, adminToken, webOrigin, superAdminSteamIds, database, rcon, pluginApiUrl, connectAddress,
+  presencePollMs: rcon ? 5000 : 0,
+});
 
 if (database) {
   app.addHook("onClose", async () => database.close());
