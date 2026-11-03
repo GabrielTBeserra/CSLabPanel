@@ -1,9 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { Badge, Box, Button, Flex, Heading, HStack, Image, Stack, Text } from "@chakra-ui/react";
+import LivePanel from "./LivePanel";
 import { mapName, mapThumb } from "./maps";
+import { useRealtime } from "./realtime";
 import { play, type SoundName } from "./sound";
 import {
+  deleteMatch,
+  endMatchOnServer,
   getMatch,
+  loadMatchOnServer,
   inviteToMatch,
   isStaff,
   sendVeto,
@@ -89,25 +94,39 @@ function TeamPanel({
 
 export default function MatchRoom({ matchId, user, onBack }: { matchId: string; user: UserRecord; onBack: () => void }) {
   const [match, setMatch] = useState<MatchRecord | null>(null);
+  const [connectAddress, setConnectAddress] = useState<string | null>(null);
   const [feedback, setFeedback] = useState("");
   const [inviteSteamId, setInviteSteamId] = useState("");
   const [captainSteamId, setCaptainSteamId] = useState("");
 
   const refresh = useCallback(async (signal?: AbortSignal) => {
     try {
-      const { match: m } = await getMatch(matchId, signal);
-      if (!signal?.aborted) setMatch(m);
-    } catch {
-      if (!signal?.aborted) setFeedback("Não foi possível carregar a sala.");
+      const result = await getMatch(matchId, signal);
+      if (signal?.aborted) return;
+      setMatch(result.match);
+      setConnectAddress(result.connectAddress);
+    } catch (error) {
+      if (signal?.aborted) return;
+      if (error instanceof Error && error.message === "NOT_FOUND") { setMatch(null); setFeedback("Esta sala não existe mais."); }
+      else setFeedback("Não foi possível carregar a sala.");
     }
   }, [matchId]);
 
   useEffect(() => {
     const controller = new AbortController();
     void refresh(controller.signal);
-    const timer = setInterval(() => void refresh(), 10000);
+    const timer = setInterval(() => void refresh(), 60000);
     return () => { controller.abort(); clearInterval(timer); };
   }, [refresh]);
+
+  useRealtime(useCallback((event) => {
+    if (event.type === "match" && event.matchId !== matchId) return;
+    if (event.type === "match" || event.type === "matches") void refresh();
+  }, [matchId, refresh]));
+
+  const copy = (text: string) => {
+    void navigator.clipboard?.writeText(text).then(() => setFeedback("Copiado."), () => setFeedback(text));
+  };
 
   const act = async (fn: () => Promise<unknown>, ok: string, sound: SoundName = "join") => {
     try { await fn(); play(sound); setFeedback(ok); await refresh(); }
@@ -154,13 +173,7 @@ export default function MatchRoom({ matchId, user, onBack }: { matchId: string; 
         <HStack gap="2">
           <Button
             className="ghost-button"
-            onClick={() => {
-              const link = `${window.location.origin}/match/${match.id}`;
-              void navigator.clipboard?.writeText(link).then(
-                () => setFeedback("Link da sala copiado."),
-                () => setFeedback(link),
-              );
-            }}
+            onClick={() => copy(`${window.location.origin}/match/${match.id}`)}
             size="xs"
           >COPIAR LINK</Button>
           <Badge className={`match-status is-${match.phase}`}>{phaseLabel[match.phase]}</Badge>
@@ -248,11 +261,39 @@ export default function MatchRoom({ matchId, user, onBack }: { matchId: string; 
         </Box>
       ) : null}
 
-      {match.phase === "veto" || match.phase === "live" ? (
+      {match.phase === "live" || match.phase === "finished" ? (
+        <LivePanel
+          canManage={isCreator}
+          connectAddress={connectAddress}
+          isStaff={isStaff(user)}
+          match={match}
+          onCopy={copy}
+          onEnd={() => {
+            if (!window.confirm("Encerrar a partida no servidor CS2?")) return;
+            void act(() => endMatchOnServer(match.id), "Partida encerrada no servidor.", "start");
+          }}
+          onLoad={() => void act(() => loadMatchOnServer(match.id), "Carregando a partida no servidor…", "start")}
+        />
+      ) : null}
+
+      {match.phase !== "lobby" ? (
         <Box className="panel-card rise-in" p="5">
           <Text className="card-kicker" fontFamily="mono" fontSize="xs">VETO DE MAPAS</Text>
           <VetoBoard match={match} onAction={(action) => void act(() => sendVeto(match.id, action), "Veto registrado.", "click")} user={user} />
         </Box>
+      ) : null}
+
+      {user.role === "superadmin" ? (
+        <Flex justify="flex-end">
+          <Button
+            className="danger-button"
+            onClick={() => {
+              if (!window.confirm(`Apagar a sala "${match.name}"? Isso não pode ser desfeito.`)) return;
+              void deleteMatch(match.id).then(() => { play("ban"); onBack(); }, () => { play("error"); setFeedback("Não foi possível apagar a sala."); });
+            }}
+            size="sm"
+          >APAGAR SALA</Button>
+        </Flex>
       ) : null}
     </Stack>
   );

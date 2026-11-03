@@ -67,8 +67,58 @@ export interface MatchRecord {
   createdBy: string | null;
   createdAt: string;
   updatedAt: string;
+  matchNumber: number;
+  knifeRound: boolean;
+  serverState: ServerState;
+  serverError: string | null;
+  live: LiveState;
   players?: MatchPlayer[];
   vetoes?: VetoRecord[];
+}
+
+export type ServerState = "idle" | "loading" | "warmup" | "live" | "paused" | "map_end" | "finished" | "error";
+
+export interface LivePlayer {
+  steamId: string;
+  name: string;
+  team: "a" | "b";
+  kills: number;
+  deaths: number;
+  assists: number;
+  damage: number;
+  headshotKills: number;
+}
+
+export interface LiveKill {
+  round: number;
+  attacker: string | null;
+  attackerTeam: "a" | "b" | null;
+  victim: string;
+  victimTeam: "a" | "b" | null;
+  weapon: string;
+  headshot: boolean;
+  at: string;
+}
+
+export interface LiveState {
+  mapNumber?: number;
+  mapName?: string;
+  round?: number;
+  scoreA?: number;
+  scoreB?: number;
+  seriesA?: number;
+  seriesB?: number;
+  paused?: boolean;
+  winner?: "a" | "b" | null;
+  maps?: { mapName: string; scoreA: number; scoreB: number; winner: "a" | "b" | null }[];
+  players?: LivePlayer[];
+  feed?: LiveKill[];
+  updatedAt?: string;
+}
+
+export interface RealtimeEvent {
+  type: "match" | "matches" | "presence" | "invites";
+  matchId?: string;
 }
 
 export interface InviteRecord {
@@ -88,6 +138,7 @@ export interface CreateMatchInput {
   maxRounds: number;
   format: MatchFormat;
   mapPool: string[];
+  knifeRound: boolean;
 }
 
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || "/api").replace(/\/+$/, "");
@@ -152,7 +203,26 @@ export const sendVeto = (matchId: string, payload: { action: "ban" | "pick"; map
   request<{ accepted?: boolean; finished?: boolean }>(`/matches/${matchId}/veto`, { method: "POST", body: JSON.stringify(payload) });
 
 export const getMatch = (matchId: string, signal?: AbortSignal) =>
-  request<{ match: MatchRecord }>(`/matches/${matchId}`, { signal });
+  request<{ match: MatchRecord; connectAddress: string | null }>(`/matches/${matchId}`, { signal });
+
+export const deleteMatch = (matchId: string) =>
+  request<{ deleted: boolean }>(`/matches/${matchId}`, { method: "DELETE" });
+
+export const loadMatchOnServer = (matchId: string) =>
+  request<{ loading: boolean }>(`/matches/${matchId}/server/load`, { method: "POST" });
+
+export const endMatchOnServer = (matchId: string) =>
+  request<{ ended: boolean }>(`/matches/${matchId}/server/end`, { method: "POST" });
+
+export const subscribeRealtime = (onEvent: (event: RealtimeEvent) => void, onStatus?: (connected: boolean) => void) => {
+  const source = new EventSource(`${apiBaseUrl}/stream`, { withCredentials: true });
+  source.onopen = () => onStatus?.(true);
+  source.onerror = () => onStatus?.(false);
+  source.onmessage = (message) => {
+    try { onEvent(JSON.parse(message.data) as RealtimeEvent); } catch { onStatus?.(true); }
+  };
+  return () => source.close();
+};
 
 export const setTeam = (matchId: string, team: "a" | "b") =>
   request<{ joined: boolean; team: string }>(`/matches/${matchId}/team`, { method: "POST", body: JSON.stringify({ team }) });

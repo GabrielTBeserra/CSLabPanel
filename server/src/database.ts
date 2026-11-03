@@ -21,6 +21,51 @@ export interface MatchRecord {
   createdBy: string | null;
   createdAt: string;
   updatedAt: string;
+  matchNumber: number;
+  knifeRound: boolean;
+  serverState: ServerState;
+  serverError: string | null;
+  live: LiveState;
+}
+
+export type ServerState = "idle" | "loading" | "warmup" | "live" | "paused" | "map_end" | "finished" | "error";
+
+export interface LivePlayer {
+  steamId: string;
+  name: string;
+  team: "a" | "b";
+  kills: number;
+  deaths: number;
+  assists: number;
+  damage: number;
+  headshotKills: number;
+}
+
+export interface LiveKill {
+  round: number;
+  attacker: string | null;
+  attackerTeam: "a" | "b" | null;
+  victim: string;
+  victimTeam: "a" | "b" | null;
+  weapon: string;
+  headshot: boolean;
+  at: string;
+}
+
+export interface LiveState {
+  mapNumber?: number;
+  mapName?: string;
+  round?: number;
+  scoreA?: number;
+  scoreB?: number;
+  seriesA?: number;
+  seriesB?: number;
+  paused?: boolean;
+  winner?: "a" | "b" | null;
+  maps?: { mapName: string; scoreA: number; scoreB: number; winner: "a" | "b" | null }[];
+  players?: LivePlayer[];
+  feed?: LiveKill[];
+  updatedAt?: string;
 }
 
 export interface CreateMatchInput {
@@ -31,6 +76,7 @@ export interface CreateMatchInput {
   maxRounds: number;
   format?: MatchFormat;
   mapPool?: string[];
+  knifeRound?: boolean;
   createdBy?: string | null;
 }
 
@@ -104,6 +150,11 @@ export interface MatchStore {
   setUserRole(steamId: string, role: UserRole): Promise<void>;
   promoteSuperAdmins(steamIds: string[]): Promise<void>;
   getMatchById(matchId: string): Promise<MatchRecord | null>;
+  getMatchByNumber(matchNumber: number): Promise<MatchRecord | null>;
+  deleteMatch(matchId: string): Promise<void>;
+  findActiveServerMatch(): Promise<MatchRecord | null>;
+  setServerState(matchId: string, state: ServerState, error?: string | null): Promise<void>;
+  setLive(matchId: string, live: LiveState): Promise<void>;
   setMatchPhase(matchId: string, phase: MatchPhase): Promise<void>;
   setMatchCaptains(matchId: string, captainAId: string | null, captainBId: string | null): Promise<void>;
   setMatchSide(matchId: string, side: "a" | "b"): Promise<void>;
@@ -134,6 +185,8 @@ const toMatch = (r: Row): MatchRecord => ({
   captainAId: r.captain_a_id ?? null, captainBId: r.captain_b_id ?? null, sideChoice: r.side_choice ?? null,
   status: r.status, createdBy: r.created_by ?? null,
   createdAt: iso(r.created_at), updatedAt: iso(r.updated_at),
+  matchNumber: Number(r.match_number ?? 0), knifeRound: r.knife_round ?? true,
+  serverState: r.server_state ?? "idle", serverError: r.server_error ?? null, live: r.live ?? {},
 });
 
 const toUser = (r: Row): UserRecord => ({
@@ -197,6 +250,12 @@ export class PostgresDatabase implements MatchStore {
       ALTER TABLE matches ADD COLUMN IF NOT EXISTS captain_a_id UUID REFERENCES users(id) ON DELETE SET NULL;
       ALTER TABLE matches ADD COLUMN IF NOT EXISTS captain_b_id UUID REFERENCES users(id) ON DELETE SET NULL;
       ALTER TABLE matches ADD COLUMN IF NOT EXISTS side_choice TEXT CHECK (side_choice IN ('a', 'b'));
+      ALTER TABLE matches ADD COLUMN IF NOT EXISTS match_number BIGSERIAL;
+      CREATE UNIQUE INDEX IF NOT EXISTS matches_number_idx ON matches (match_number);
+      ALTER TABLE matches ADD COLUMN IF NOT EXISTS knife_round BOOLEAN NOT NULL DEFAULT true;
+      ALTER TABLE matches ADD COLUMN IF NOT EXISTS server_state TEXT NOT NULL DEFAULT 'idle';
+      ALTER TABLE matches ADD COLUMN IF NOT EXISTS server_error TEXT;
+      ALTER TABLE matches ADD COLUMN IF NOT EXISTS live JSONB NOT NULL DEFAULT '{}'::jsonb;
       CREATE TABLE IF NOT EXISTS match_vetoes (
         id UUID PRIMARY KEY,
         match_id UUID NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
@@ -239,12 +298,39 @@ export class PostgresDatabase implements MatchStore {
 
   async createMatch(input: CreateMatchInput): Promise<MatchRecord> {
     const r = await this.pool.query<Row>(
-      `INSERT INTO matches (id, name, map_name, team_a_name, team_b_name, max_rounds, format, map_pool, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+      `INSERT INTO matches (id, name, map_name, team_a_name, team_b_name, max_rounds, format, map_pool, knife_round, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
       [randomUUID(), input.name, input.mapName, input.teamAName, input.teamBName, input.maxRounds,
-       input.format ?? "bo1", input.mapPool ?? [], input.createdBy ?? null],
+       input.format ?? "bo1", input.mapPool ?? [], input.knifeRound ?? true, input.createdBy ?? null],
     );
     return toMatch(r.rows[0]!);
+  }
+
+  async getMatchByNumber(matchNumber: number): Promise<MatchRecord | null> {
+    const r = await this.pool.query<Row>(`SELECT * FROM matches WHERE match_number = $1`, [matchNumber]);
+    return r.rows[0] ? toMatch(r.rows[0]) : null;
+  }
+
+  async deleteMatch(matchId: string): Promise<void> {
+    await this.pool.query(`DELETE FROM matches WHERE id = $1`, [matchId]);
+  }
+
+  async findActiveServerMatch(): Promise<MatchRecord | null> {
+    const r = await this.pool.query<Row>(
+      `SELECT * FROM matches WHERE server_state IN ('loading', 'warmup', 'live', 'paused', 'map_end') ORDER BY updated_at DESC LIMIT 1`,
+    );
+    return r.rows[0] ? toMatch(r.rows[0]) : null;
+  }
+
+  async setServerState(matchId: string, state: ServerState, error: string | null = null): Promise<void> {
+    await this.pool.query(
+      `UPDATE matches SET server_state = $2, server_error = $3, updated_at = now() WHERE id = $1`,
+      [matchId, state, error],
+    );
+  }
+
+  async setLive(matchId: string, live: LiveState): Promise<void> {
+    await this.pool.query(`UPDATE matches SET live = $2::jsonb, updated_at = now() WHERE id = $1`, [matchId, JSON.stringify(live)]);
   }
 
   async getMatchById(matchId: string): Promise<MatchRecord | null> {

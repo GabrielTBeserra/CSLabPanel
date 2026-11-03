@@ -8,6 +8,9 @@ import {
   type MatchStore,
   type UserRecord,
 } from "./database.js";
+import { applyMatchzyEvent, buildMatchzyConfig, seriesMaps } from "./live.js";
+import { quoteArg, sendRconCommand, type RconConfig } from "./rcon.js";
+import { RealtimeBus, type RealtimeEvent } from "./realtime.js";
 
 export interface ServerConfig {
   pluginToken: string;
@@ -15,6 +18,10 @@ export interface ServerConfig {
   webOrigin: string;
   superAdminSteamIds?: string[];
   database?: MatchStore | null;
+  rcon?: RconConfig | null;
+  pluginApiUrl?: string;
+  connectAddress?: string;
+  sendRcon?: (config: RconConfig, command: string) => Promise<string>;
 }
 
 const isStaff = (user: UserRecord) => user.role === "admin" || user.role === "superadmin";
@@ -28,6 +35,8 @@ declare module "fastify" {
 
 const unauthorized = { error: { code: "UNAUTHORIZED", message: "Authentication required" } };
 const forbidden = { error: { code: "FORBIDDEN", message: "Insufficient permissions" } };
+const notFound = { error: { code: "NOT_FOUND", message: "Match not found" } };
+const teamsLocked = { error: { code: "TEAMS_LOCKED", message: "Teams are locked after the lobby phase" } };
 const invalidRequest = { error: { code: "VALIDATION_ERROR", message: "Invalid request" } };
 const databaseUnavailable = { error: { code: "DATABASE_UNAVAILABLE", message: "Database unavailable" } };
 
@@ -50,6 +59,7 @@ const matchSchema = {
     maxRounds: { type: "integer", minimum: 1, maximum: 30 },
     format: { type: "string", enum: ["bo1", "bo3"] },
     mapPool: { type: "array", minItems: 3, maxItems: 10, uniqueItems: true, items: { type: "string", pattern: "^de_[a-z0-9_]+$" } },
+    knifeRound: { type: "boolean" },
   },
 } as const;
 
@@ -58,18 +68,20 @@ interface VetoStep {
   team: "a" | "b";
 }
 
-const VETO_STEPS: Record<"bo1" | "bo3", VetoStep[]> = {
-  bo1: [
-    { action: "ban", team: "a" }, { action: "ban", team: "b" },
-    { action: "ban", team: "a" }, { action: "ban", team: "b" },
-    { action: "ban", team: "a" }, { action: "ban", team: "b" },
-  ],
-  bo3: [
-    { action: "ban", team: "a" }, { action: "ban", team: "b" },
-    { action: "pick", team: "a" }, { action: "pick", team: "b" },
-    { action: "ban", team: "a" }, { action: "ban", team: "b" },
-  ],
+export const vetoSteps = (format: "bo1" | "bo3", poolSize: number): VetoStep[] => {
+  const picks = format === "bo3" ? 2 : 0;
+  const bans = Math.max(poolSize - 1 - picks, 0);
+  const leadingBans = format === "bo3" ? Math.min(2, bans) : bans;
+  const actions: VetoStep["action"][] = [
+    ...Array<VetoStep["action"]>(leadingBans).fill("ban"),
+    ...Array<VetoStep["action"]>(picks).fill("pick"),
+    ...Array<VetoStep["action"]>(bans - leadingBans).fill("ban"),
+  ];
+  return actions.map((action, i) => ({ action, team: i % 2 === 0 ? "a" : "b" }));
 };
+
+const DEFAULT_POOL = ["de_mirage", "de_inferno", "de_nuke", "de_ancient", "de_anubis", "de_vertigo", "de_overpass"];
+const poolOf = (match: MatchRecord) => (match.mapPool.length >= 3 ? match.mapPool : DEFAULT_POOL);
 
 const STEAM_PROFILE_XML = "https://steamcommunity.com/profiles";
 const XML_TAG = (tag: string) => new RegExp(`<${tag}>(?:<!\\[CDATA\\[)?([^<]+?)(?:\\]\\]>)?</${tag}>`);
@@ -91,6 +103,7 @@ const fetchSteamProfile = async (steamId: string): Promise<{ name: string; avata
   }
 };
 
+const LOAD_CONFIRM_TIMEOUT_MS = 25000;
 const SESSION_COOKIE = "cshome_session";
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const STEAM_OPENID = "https://steamcommunity.com/openid/login";
@@ -105,14 +118,62 @@ const parseCookies = (header: string | undefined): Record<string, string> => {
   return cookies;
 };
 
-export const buildServer = ({ pluginToken, adminToken, webOrigin, superAdminSteamIds = [], database = null }: ServerConfig) => {
+export const buildServer = ({
+  pluginToken, adminToken, webOrigin, superAdminSteamIds = [], database = null,
+  rcon = null, pluginApiUrl = "", connectAddress = "", sendRcon = sendRconCommand,
+}: ServerConfig) => {
   const app = Fastify({ bodyLimit: 8192 });
   const secureCookie = webOrigin.startsWith("https:");
+  const bus = new RealtimeBus();
+  const publish = (event: RealtimeEvent) => bus.publish(event);
+  const publishMatch = (matchId: string) => { publish({ type: "match", matchId }); publish({ type: "matches" }); };
+
+  const requirePlugin = async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!pluginToken) {
+      return reply.code(503).send({ error: { code: "PLUGIN_INTEGRATION_DISABLED", message: "Plugin integration unavailable" } });
+    }
+    if (!isAuthorized(request.headers.authorization, pluginToken)) return reply.code(401).send(unauthorized);
+  };
+
+  const loadOnServer = async (match: MatchRecord): Promise<{ ok: boolean; error?: string }> => {
+    if (!database) return { ok: false, error: "Database unavailable" };
+    if (!rcon || !pluginApiUrl) {
+      await database.setServerState(match.id, "error", "Integração com o servidor CS2 não configurada");
+      publishMatch(match.id);
+      return { ok: false, error: "Servidor CS2 não configurado" };
+    }
+    const active = await database.findActiveServerMatch();
+    if (active && active.id !== match.id) {
+      await database.setServerState(match.id, "error", `Servidor ocupado com a partida "${active.name}"`);
+      publishMatch(match.id);
+      return { ok: false, error: "Servidor ocupado" };
+    }
+    await database.setServerState(match.id, "loading");
+    await database.setLive(match.id, {});
+    publishMatch(match.id);
+    try {
+      const url = `${pluginApiUrl}/api/plugin/matches/${match.matchNumber}/config`;
+      await sendRcon(rcon, `matchzy_loadmatch_url ${quoteArg(url)} ${quoteArg("Authorization")} ${quoteArg(`Bearer ${pluginToken}`)}`);
+      setTimeout(() => {
+        void database.getMatchById(match.id).then(async (current) => {
+          if (current?.serverState !== "loading") return;
+          await database.setServerState(match.id, "error", "O MatchZy não confirmou a partida (outra partida carregada no servidor?)");
+          publishMatch(match.id);
+        }).catch(() => undefined);
+      }, LOAD_CONFIRM_TIMEOUT_MS).unref();
+      return { ok: true };
+    } catch (error) {
+      app.log.warn({ errorName: error instanceof Error ? error.name : "UnknownError" }, "RCON load failed");
+      await database.setServerState(match.id, "error", "Não foi possível falar com o servidor CS2 (RCON)");
+      publishMatch(match.id);
+      return { ok: false, error: "RCON indisponível" };
+    }
+  };
 
   app.register(cors, {
     origin: webOrigin,
     credentials: true,
-    methods: ["GET", "POST"],
+    methods: ["GET", "POST", "DELETE"],
     allowedHeaders: ["Content-Type", "Authorization"],
   });
 
@@ -256,13 +317,18 @@ export const buildServer = ({ pluginToken, adminToken, webOrigin, superAdminStea
     if (!database) return reply.code(503).send(databaseUnavailable);
     const match = await database.createMatch({ ...(request.body as CreateMatchInput), createdBy: request.currentUser!.id });
     await database.joinMatch(match.id, request.currentUser!.id);
+    publishMatch(match.id);
     return reply.code(201).send({ match });
   });
 
   app.post("/api/matches/:id/join", { onRequest: requireUser }, async (request, reply) => {
     if (!database) return reply.code(503).send(databaseUnavailable);
     const { id } = request.params as { id: string };
+    const match = await database.getMatchById(id);
+    if (!match) return reply.code(404).send(notFound);
+    if (match.phase !== "lobby") return reply.code(409).send(teamsLocked);
     await database.joinMatch(id, request.currentUser!.id);
+    publishMatch(id);
     return { joined: true, matchId: id };
   });
 
@@ -272,7 +338,7 @@ export const buildServer = ({ pluginToken, adminToken, webOrigin, superAdminStea
     const match = await database.getMatchById(id);
     if (!match) return reply.code(404).send({ error: { code: "NOT_FOUND", message: "Match not found" } });
     const [players, vetoes] = await Promise.all([database.listMatchPlayers(id), database.listVetoes(id)]);
-    return { match: { ...match, players, vetoes } };
+    return { match: { ...match, players, vetoes }, connectAddress: connectAddress || null };
   });
 
   app.post(
@@ -285,8 +351,12 @@ export const buildServer = ({ pluginToken, adminToken, webOrigin, superAdminStea
       if (!database) return reply.code(503).send(databaseUnavailable);
       const { id } = request.params as { id: string };
       const { team } = request.body as { team: "a" | "b" };
+      const match = await database.getMatchById(id);
+      if (!match) return reply.code(404).send(notFound);
+      if (match.phase !== "lobby") return reply.code(409).send(teamsLocked);
       await database.joinMatch(id, request.currentUser!.id);
       await database.setPlayerTeam(id, request.currentUser!.id, team);
+      publishMatch(id);
       return { joined: true, matchId: id, team };
     },
   );
@@ -304,6 +374,7 @@ export const buildServer = ({ pluginToken, adminToken, webOrigin, superAdminStea
       [players[i], players[j]] = [players[j]!, players[i]!];
     }
     await Promise.all(players.map((p, i) => database.setPlayerTeam(id, p.userId, i % 2 === 0 ? "a" : "b")));
+    publishMatch(id);
     return { shuffled: true, matchId: id };
   });
 
@@ -314,7 +385,7 @@ export const buildServer = ({ pluginToken, adminToken, webOrigin, superAdminStea
     if (!match) return reply.code(404).send(invalidRequest);
     if (!canManageMatch(match, request.currentUser!)) return reply.code(403).send(forbidden);
     if (match.phase !== "lobby") return reply.code(409).send({ error: { code: "INVALID_PHASE", message: "Veto already started" } });
-    const pool = match.mapPool.length >= 3 ? match.mapPool : ["de_mirage", "de_inferno", "de_nuke", "de_ancient", "de_anubis", "de_vertigo", "de_overpass"];
+    const pool = poolOf(match);
     const { captainBSteamId } = (request.body ?? {}) as { captainBSteamId?: string };
     const players = await database.listMatchPlayers(id);
     let captainBId: string | null = null;
@@ -329,6 +400,7 @@ export const buildServer = ({ pluginToken, adminToken, webOrigin, superAdminStea
     }
     await database.setMatchCaptains(id, request.currentUser!.id, captainBId);
     await database.setMatchPhase(id, "veto");
+    publishMatch(id);
     return { started: true, matchId: id, mapPool: pool, captainAId: request.currentUser!.id, captainBId };
   });
 
@@ -341,13 +413,14 @@ export const buildServer = ({ pluginToken, adminToken, webOrigin, superAdminStea
     }
     const user = request.currentUser!;
     const vetoes = await database.listVetoes(id);
-    const pool = match.mapPool.length >= 3 ? match.mapPool : ["de_mirage", "de_inferno", "de_nuke", "de_ancient", "de_anubis", "de_vertigo", "de_overpass"];
+    const pool = poolOf(match);
     const used = new Set(vetoes.filter((v) => v.mapName).map((v) => v.mapName));
     const remaining = pool.filter((m) => !used.has(m));
-    const steps = VETO_STEPS[match.format];
+    const steps = vetoSteps(match.format, pool.length);
+    const mapSteps = vetoes.filter((v) => v.actorName !== "Decider" && v.action !== "side").length;
     const body = request.body as { action?: string; mapName?: string; side?: string };
 
-    if (vetoes.length >= steps.length) {
+    if (mapSteps >= steps.length) {
       if (body.action !== "side" || (body.side !== "a" && body.side !== "b")) {
         return reply.code(400).send({ error: { code: "SIDE_REQUIRED", message: "Choose side 'a' or 'b'" } });
       }
@@ -358,11 +431,11 @@ export const buildServer = ({ pluginToken, adminToken, webOrigin, superAdminStea
         team: body.side as "a" | "b", actorSteamId: user.steamId, actorName: user.displayName,
       });
       await database.setMatchSide(id, body.side as "a" | "b");
-      await database.setMatchPhase(id, "live");
+      await finishVeto(id);
       return { finished: true, side: body.side, remaining };
     }
 
-    const step = steps[vetoes.length]!;
+    const step = steps[mapSteps]!;
     const expectedCaptain = step.team === "a" ? match.captainAId : match.captainBId;
     if (!expectedCaptain || user.id !== expectedCaptain) {
       return reply.code(403).send({ error: { code: "NOT_YOUR_TURN", message: "It is the other captain's turn" } });
@@ -376,13 +449,116 @@ export const buildServer = ({ pluginToken, adminToken, webOrigin, superAdminStea
     });
 
     const nowRemaining = remaining.filter((m) => m !== body.mapName);
-    if (vetoes.length + 1 === steps.length && nowRemaining.length === 1) {
+    const vetoDone = mapSteps + 1 === steps.length;
+    if (vetoDone && nowRemaining.length === 1) {
       await database.insertVeto({
         matchId: id, seq: vetoes.length + 2, action: "pick", mapName: nowRemaining[0]!,
         team: null, actorSteamId: "system", actorName: "Decider",
       });
     }
-    return { accepted: true, next: vetoes.length + 2 <= steps.length ? steps[vetoes.length + 1] ?? "side" : "side", remaining: nowRemaining };
+    if (vetoDone && match.knifeRound) await finishVeto(id);
+    else publishMatch(id);
+    return { accepted: true, next: vetoDone ? (match.knifeRound ? "knife" : "side") : steps[mapSteps + 1], remaining: nowRemaining };
+  });
+
+  const finishVeto = async (id: string) => {
+    if (!database) return;
+    await database.setMatchPhase(id, "live");
+    publishMatch(id);
+    const match = await database.getMatchById(id);
+    if (match) void loadOnServer(match);
+  };
+
+  app.post("/api/matches/:id/server/load", { onRequest: requireUser }, async (request, reply) => {
+    if (!database) return reply.code(503).send(databaseUnavailable);
+    const { id } = request.params as { id: string };
+    const match = await database.getMatchById(id);
+    if (!match) return reply.code(404).send(notFound);
+    if (!canManageMatch(match, request.currentUser!)) return reply.code(403).send(forbidden);
+    if (match.phase !== "live") return reply.code(409).send({ error: { code: "INVALID_PHASE", message: "Finish the veto first" } });
+    const result = await loadOnServer(match);
+    return result.ok ? { loading: true } : reply.code(409).send({ error: { code: "SERVER_LOAD_FAILED", message: result.error } });
+  });
+
+  app.post("/api/matches/:id/server/end", { onRequest: requireStaff }, async (request, reply) => {
+    if (!database) return reply.code(503).send(databaseUnavailable);
+    const { id } = request.params as { id: string };
+    const match = await database.getMatchById(id);
+    if (!match) return reply.code(404).send(notFound);
+    if (rcon) await sendRcon(rcon, "css_endmatch").catch(() => undefined);
+    await database.setServerState(id, "finished");
+    await database.setMatchPhase(id, "finished");
+    publishMatch(id);
+    return { ended: true };
+  });
+
+  app.delete("/api/matches/:id", { onRequest: requireStaff }, async (request, reply) => {
+    if (!database) return reply.code(503).send(databaseUnavailable);
+    if (request.currentUser!.role !== "superadmin") return reply.code(403).send(forbidden);
+    const { id } = request.params as { id: string };
+    const match = await database.getMatchById(id);
+    if (!match) return reply.code(404).send(notFound);
+    const onServer = ["loading", "warmup", "live", "paused", "map_end"].includes(match.serverState);
+    if (onServer && rcon) await sendRcon(rcon, "css_endmatch").catch(() => undefined);
+    await database.deleteMatch(id);
+    publish({ type: "match", matchId: id });
+    publish({ type: "matches" });
+    return { deleted: true };
+  });
+
+  app.get("/api/plugin/matches/:number/config", { onRequest: requirePlugin }, async (request, reply) => {
+    if (!database) return reply.code(503).send(databaseUnavailable);
+    const number = Number((request.params as { number: string }).number);
+    const match = Number.isInteger(number) ? await database.getMatchByNumber(number) : null;
+    if (!match || match.phase !== "live") return reply.code(404).send(notFound);
+    const [players, vetoes] = await Promise.all([database.listMatchPlayers(match.id), database.listVetoes(match.id)]);
+    return buildMatchzyConfig(match, players, vetoes, { eventsUrl: `${pluginApiUrl}/api/plugin/events`, pluginToken });
+  });
+
+  app.post("/api/plugin/events", { onRequest: requirePlugin, bodyLimit: 262144 }, async (request, reply) => {
+    if (!database) return reply.code(503).send(databaseUnavailable);
+    const event = (request.body ?? {}) as Record<string, unknown>;
+    const number = Number(event.matchid);
+    if (!Number.isInteger(number) || number <= 0) return reply.code(202).send({ accepted: false });
+    const previous = eventQueues.get(number) ?? Promise.resolve(false);
+    const current = previous.catch(() => false).then(() => applyEvent(number, event));
+    eventQueues.set(number, current);
+    const accepted = await current;
+    if (eventQueues.get(number) === current) eventQueues.delete(number);
+    return reply.code(202).send({ accepted });
+  });
+
+  const eventQueues = new Map<number, Promise<boolean>>();
+  const applyEvent = async (number: number, event: Record<string, unknown>) => {
+    if (!database) return false;
+    const match = await database.getMatchByNumber(number);
+    if (!match) return false;
+    const [players, vetoes] = await Promise.all([database.listMatchPlayers(match.id), database.listVetoes(match.id)]);
+    const teamBySteamId = new Map(players.map((p) => [p.steamId, p.team]));
+    const result = applyMatchzyEvent(match.live, match.serverState, event, (steamId) => teamBySteamId.get(steamId) ?? null);
+    const maps = seriesMaps(match, vetoes);
+    const currentMap = result.live.mapNumber !== undefined ? maps[result.live.mapNumber] : undefined;
+    if (currentMap) result.live.mapName = currentMap;
+    await database.setLive(match.id, result.live);
+    if (result.state !== match.serverState) await database.setServerState(match.id, result.state);
+    if (result.seriesFinished) await database.setMatchPhase(match.id, "finished");
+    publishMatch(match.id);
+    return true;
+  };
+
+  app.get("/api/stream", { onRequest: requireUser }, (request, reply) => {
+    reply.hijack();
+    const raw = reply.raw;
+    raw.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+    raw.write("retry: 3000\n\n");
+    const unsubscribe = bus.subscribe((event) => raw.write(`data: ${JSON.stringify(event)}\n\n`));
+    const ping = setInterval(() => raw.write(": ping\n\n"), 25000);
+    request.raw.on("close", () => { clearInterval(ping); unsubscribe(); });
   });
 
   app.post(
@@ -396,6 +572,7 @@ export const buildServer = ({ pluginToken, adminToken, webOrigin, superAdminStea
       const { id } = request.params as { id: string };
       const { steamId } = request.body as { steamId: string };
       await database.createInvite(id, request.currentUser!.id, steamId);
+      publish({ type: "invites" });
       return reply.code(201).send({ invited: true });
     },
   );
@@ -410,6 +587,8 @@ export const buildServer = ({ pluginToken, adminToken, webOrigin, superAdminStea
     const { id } = request.params as { id: string };
     const { accept } = request.body as { accept?: boolean };
     await database.respondInvite(id, request.currentUser!.id, accept === true);
+    publish({ type: "invites" });
+    publish({ type: "matches" });
     return { responded: true };
   });
 
@@ -454,14 +633,7 @@ export const buildServer = ({ pluginToken, adminToken, webOrigin, superAdminStea
   app.post(
     "/api/plugin/heartbeat",
     {
-      onRequest: async (request, reply) => {
-        if (!pluginToken) {
-          return reply.code(503).send({ error: { code: "PLUGIN_INTEGRATION_DISABLED", message: "Plugin integration unavailable" } });
-        }
-        if (!isAuthorized(request.headers.authorization, pluginToken)) {
-          return reply.code(401).send(unauthorized);
-        }
-      },
+      onRequest: requirePlugin,
       schema: {
         body: {
           type: "object",
@@ -491,6 +663,7 @@ export const buildServer = ({ pluginToken, adminToken, webOrigin, superAdminStea
       const { players } = request.body as { players?: { steamId: string; name: string }[] };
       if (database && players) {
         await database.reportServerPlayers(players).catch((error) => request.log.warn(error, "Failed to record server players"));
+        publish({ type: "presence" });
       }
       return reply.code(202).send({ accepted: true, receivedAt: new Date().toISOString() });
     },

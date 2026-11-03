@@ -21,6 +21,11 @@ const match: MatchRecord = {
   createdBy: null,
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
+  matchNumber: 7,
+  knifeRound: true,
+  serverState: "idle",
+  serverError: null,
+  live: {},
 };
 
 const createDatabase = (created: CreateMatchInput[] = []): MatchStore => ({
@@ -46,6 +51,11 @@ const createDatabase = (created: CreateMatchInput[] = []): MatchStore => ({
   setUserRole: async () => undefined,
   promoteSuperAdmins: async () => undefined,
   getMatchById: async () => match,
+  getMatchByNumber: async () => match,
+  deleteMatch: async () => undefined,
+  findActiveServerMatch: async () => null,
+  setServerState: async () => undefined,
+  setLive: async () => undefined,
   setMatchPhase: async () => undefined,
   setMatchCaptains: async () => undefined,
   setMatchSide: async () => undefined,
@@ -198,6 +208,68 @@ describe("API foundation", () => {
   });
 });
 
+describe("Match server integration", () => {
+  const sessionUser: UserRecord = {
+    id: "u1", steamId: "76561198000000001", displayName: "P1", avatarUrl: null, role: "player",
+    createdAt: new Date().toISOString(), lastSeenAt: new Date().toISOString(),
+  };
+  const cookie = { cookie: "cshome_session=token" };
+
+  it("rejects MatchZy events without the plugin token", async () => {
+    const app = buildServer({ ...config, database: createDatabase() });
+    const response = await app.inject({ method: "POST", url: "/api/plugin/events", payload: { event: "going_live", matchid: 7 } });
+    assert.equal(response.statusCode, 401);
+    await app.close();
+  });
+
+  it("stores live state from an authenticated MatchZy event", async () => {
+    const database = createDatabase();
+    const states: string[] = [];
+    database.setServerState = async (_, state) => { states.push(state); };
+    const app = buildServer({ ...config, database });
+    const response = await app.inject({
+      method: "POST", url: "/api/plugin/events", headers: { authorization: "Bearer test-plugin-token" },
+      payload: { event: "going_live", matchid: 7, map_number: 0 },
+    });
+    assert.equal(response.statusCode, 202);
+    assert.deepEqual(states, ["live"]);
+    await app.close();
+  });
+
+  it("locks teams once the match leaves the lobby", async () => {
+    const database = createDatabase();
+    database.findSessionUser = async () => ({ user: sessionUser, sessionId: "s1" });
+    database.getMatchById = async () => ({ ...match, phase: "veto" });
+    const app = buildServer({ ...config, database });
+    const response = await app.inject({ method: "POST", url: `/api/matches/${match.id}/team`, headers: cookie, payload: { team: "b" } });
+    assert.equal(response.statusCode, 409);
+    assert.equal(response.json().error.code, "TEAMS_LOCKED");
+    await app.close();
+  });
+
+  it("loads the match on the CS2 server over RCON when the veto ends", async () => {
+    const database = createDatabase();
+    database.findSessionUser = async () => ({ user: sessionUser, sessionId: "s1" });
+    const vetoMatch = { ...match, phase: "veto" as const, format: "bo1" as const, knifeRound: true, captainAId: "u1", captainBId: "u2", mapPool: ["de_mirage", "de_inferno", "de_nuke"] };
+    database.getMatchById = async () => vetoMatch;
+    database.listVetoes = async () => [{ id: "1", matchId: match.id, seq: 1, action: "ban", mapName: "de_nuke", team: "a", actorSteamId: "1", actorName: "P1", createdAt: "" }];
+    const commands: string[] = [];
+    database.setMatchPhase = async (_, phase) => { vetoMatch.phase = phase as "veto"; };
+    sessionUser.id = "u2";
+    const app = buildServer({
+      ...config, database, rcon: { host: "127.0.0.1", port: 27015, password: "x" }, pluginApiUrl: "http://api",
+      sendRcon: async (_, command) => { commands.push(command); return ""; },
+    });
+    const response = await app.inject({ method: "POST", url: `/api/matches/${match.id}/veto`, headers: cookie, payload: { action: "ban", mapName: "de_inferno" } });
+    sessionUser.id = "u1";
+    assert.equal(response.statusCode, 200);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(commands.length, 1);
+    assert.match(commands[0]!, /^matchzy_loadmatch_url "http:\/\/api\/api\/plugin\/matches\/7\/config" "Authorization" "Bearer test-plugin-token"$/);
+    await app.close();
+  });
+});
+
 describe("Roles", () => {
   const userWithRole = (role: UserRole): UserRecord => ({
     id: `user-${role}`, steamId: "76561198000000001", displayName: role, avatarUrl: null, role,
@@ -248,6 +320,15 @@ describe("Roles", () => {
     });
     assert.equal(response.statusCode, 400);
     await app.close();
+  });
+
+  it("only lets the super admin delete rooms", async () => {
+    const admin = buildAs("admin");
+    assert.equal((await admin.inject({ method: "DELETE", url: `/api/matches/${match.id}`, headers: cookie })).statusCode, 403);
+    await admin.close();
+    const superAdmin = buildAs("superadmin");
+    assert.equal((await superAdmin.inject({ method: "DELETE", url: `/api/matches/${match.id}`, headers: cookie })).statusCode, 200);
+    await superAdmin.close();
   });
 
   it("lets admins shuffle a room they did not create", async () => {

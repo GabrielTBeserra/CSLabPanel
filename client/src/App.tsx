@@ -16,9 +16,12 @@ import Backdrop from "./Backdrop";
 import Logo from "./Logo";
 import MatchRoom from "./MatchRoom";
 import { DEFAULT_POOL, MAPS, mapIcon, mapName, mapThumb } from "./maps";
+import { serverStateLabel } from "./labels";
+import { useRealtime, useRealtimeStatus } from "./realtime";
 import { isMuted, onMutedChange, play, setMuted } from "./sound";
 import {
   createMatch,
+  deleteMatch,
   isStaff,
   roleLabel,
   getApiHealth,
@@ -50,6 +53,7 @@ const initialForm = {
   maxRounds: 24,
   format: "bo1" as MatchFormat,
   mapPool: [...DEFAULT_POOL],
+  knifeRound: true,
 };
 
 const phaseLabel: Record<string, string> = {
@@ -59,10 +63,13 @@ const phaseLabel: Record<string, string> = {
   finished: "FINALIZADA",
 };
 
-const vetoStepsFor = (format: MatchFormat) =>
-  format === "bo3"
-    ? ["BAN A", "BAN B", "PICK A", "PICK B", "BAN A", "BAN B"]
-    : ["BAN A", "BAN B", "BAN A", "BAN B", "BAN A", "BAN B"];
+const vetoStepsFor = (format: MatchFormat, poolSize: number) => {
+  const picks = format === "bo3" ? 2 : 0;
+  const bans = Math.max(poolSize - 1 - picks, 0);
+  const leading = format === "bo3" ? Math.min(2, bans) : bans;
+  const actions = [...Array(leading).fill("BAN"), ...Array(picks).fill("PICK"), ...Array(bans - leading).fill("BAN")] as string[];
+  return actions.map((action, i) => `${action} ${i % 2 === 0 ? "A" : "B"}`);
+};
 
 function ConnectionSignal({ state }: { state: ConnectionState }) {
   return (
@@ -131,8 +138,8 @@ export function MapCard({
 export function VetoBoard({ match, user, onAction }: { match: MatchRecord; user: UserRecord; onAction: (action: { action: "ban" | "pick"; mapName: string } | { action: "side"; side: "a" | "b" }) => void }) {
   const vetoes = match.vetoes ?? [];
   const pool = match.mapPool.length >= 3 ? match.mapPool : DEFAULT_POOL;
-  const steps = vetoStepsFor(match.format);
-  const stepIndex = vetoes.length;
+  const steps = vetoStepsFor(match.format, pool.length);
+  const stepIndex = vetoes.filter((v) => v.actorName !== "Decider" && v.action !== "side").length;
   const currentStep = steps[stepIndex];
   const intent: "ban" | "pick" = currentStep?.startsWith("BAN") ? "ban" : "pick";
   const isMyTurn =
@@ -162,8 +169,10 @@ export function VetoBoard({ match, user, onAction }: { match: MatchRecord; user:
               {isMyTurn ? `Sua vez — escolha um mapa para ${intent === "ban" ? "banir" : "pickar"}` : "Aguardando o outro capitão…"}
             </Text>
           </>
+        ) : match.knifeRound ? (
+          <Text fontWeight="bold">Veto concluído — o lado será decidido no round de faca.</Text>
         ) : match.sideChoice ? (
-          <Text fontWeight="bold">Veto concluído — {teamName(match.sideChoice)} escolheu o lado.</Text>
+          <Text fontWeight="bold">Veto concluído — {teamName(match.sideChoice)} começa de CT.</Text>
         ) : (
           <Text fontWeight="bold">{isSideCaptain ? "Escolha qual time começa de CT" : "Aguardando escolha de lado…"}</Text>
         )}
@@ -191,7 +200,7 @@ export function VetoBoard({ match, user, onAction }: { match: MatchRecord; user:
         })}
       </Grid>
 
-      {isSideChoice && !match.sideChoice ? (
+      {isSideChoice && !match.sideChoice && !match.knifeRound ? (
         <Grid gap="3" mt="4" templateColumns="1fr 1fr">
           <Button className="side-button is-ct" disabled={!isSideCaptain} onClick={() => onAction({ action: "side", side: "a" })}>
             {match.teamAName} começa CT
@@ -263,9 +272,12 @@ export default function App() {
     return () => controller.abort();
   }, [refresh]);
 
+  useRealtime(useCallback(() => { void refresh(); }, [refresh]), Boolean(user) && !roomMatch);
+  const live = useRealtimeStatus();
+
   useEffect(() => {
     if (!user) return;
-    const timer = setInterval(() => void refresh(), 15000);
+    const timer = setInterval(() => void refresh(), 60000);
     return () => clearInterval(timer);
   }, [user, refresh]);
 
@@ -291,6 +303,7 @@ export default function App() {
         maxRounds: form.maxRounds,
         format: form.format,
         mapPool: form.mapPool,
+        knifeRound: form.knifeRound,
       });
       setForm(initialForm);
       setFeedback("Partida criada com sucesso.");
@@ -338,12 +351,18 @@ export default function App() {
             <Logo size={42} />
           </Box>
           <Stack gap="0">
-            <Text className="brand-name" fontSize="sm" fontWeight="bold">CS HOME LAB</Text>
-            <Text className="brand-caption" fontFamily="mono" fontSize="xs">MATCH PLATFORM</Text>
+            <Text className="brand-name" fontSize="md" fontWeight="bold">FRAG<span className="title-accent">HOUSE</span></Text>
+            <Text className="brand-caption" fontFamily="mono" fontSize="xs">CS2 MATCH PLATFORM</Text>
           </Stack>
         </HStack>
         <HStack gap="3" wrap="wrap">
           <ConnectionSignal state={connection} />
+          {user ? (
+            <HStack className={`connection-signal ${live ? "is-online" : "is-offline"}`} gap="2">
+              <Box aria-hidden="true" className="signal-dot" />
+              <Text fontFamily="mono" fontSize="xs">{live ? "AO VIVO" : "RECONECTANDO"}</Text>
+            </HStack>
+          ) : null}
           <Button
             aria-label={muted ? "Ativar sons" : "Silenciar sons"}
             className="ghost-button"
@@ -464,6 +483,13 @@ export default function App() {
                       <label className="field"><span>Time B</span><input required maxLength={64} onChange={(e) => setForm({ ...form, teamBName: e.target.value })} value={form.teamBName} /></label>
                     </Grid>
                     <label className="field"><span>Máximo de rounds</span><input min="1" max="30" onChange={(e) => setForm({ ...form, maxRounds: Number(e.target.value) })} type="number" value={form.maxRounds} /></label>
+                    <label className="toggle-field">
+                      <input checked={form.knifeRound} onChange={(e) => setForm({ ...form, knifeRound: e.target.checked })} type="checkbox" />
+                      <span>
+                        <strong>Round de faca</strong>
+                        <small>{form.knifeRound ? "Quem vencer a faca escolhe o lado." : "O capitão B escolhe o lado no veto."}</small>
+                      </span>
+                    </label>
                     <Button className="primary-button" disabled={isBusy || form.mapPool.length < 3} mt="2" type="submit" w="full">
                       {isBusy ? "CRIANDO..." : "CRIAR PARTIDA"}
                     </Button>
@@ -542,9 +568,29 @@ export default function App() {
                                     size="xs"
                                   >INICIAR VETO</Button>
                                 ) : null}
+                                {user.role === "superadmin" ? (
+                                  <Button
+                                    aria-label={`Apagar a sala ${match.name}`}
+                                    className="danger-button"
+                                    onClick={() => {
+                                      if (!window.confirm(`Apagar a sala "${match.name}"? Isso não pode ser desfeito.`)) return;
+                                      void handleAction(() => deleteMatch(match.id), "Sala apagada.");
+                                    }}
+                                    size="xs"
+                                  >APAGAR</Button>
+                                ) : null}
                               </HStack>
                             </Flex>
-                            {match.phase === "veto" || match.phase === "live" ? (
+                            {match.phase === "live" || match.phase === "finished" ? (
+                              <Flex align="center" className="card-score" gap="3" mt="3" wrap="wrap">
+                                <Badge className={`server-state is-${match.serverState}`}>{serverStateLabel[match.serverState]}</Badge>
+                                <Text className="card-score-value">
+                                  <span className="score-a">{match.live.scoreA ?? 0}</span> : <span className="score-b">{match.live.scoreB ?? 0}</span>
+                                </Text>
+                                {match.live.mapName ? <Text fontFamily="mono" fontSize="xs">{mapName(match.live.mapName)} · ROUND {match.live.round ?? 0}</Text> : null}
+                              </Flex>
+                            ) : null}
+                            {match.phase === "veto" ? (
                               <VetoBoard match={match} onAction={(action) => void handleAction(() => sendVeto(match.id, action), "Veto registrado.")} user={user} />
                             ) : null}
                           </Box>
@@ -560,7 +606,7 @@ export default function App() {
       </Box>
 
       <Flex as="footer" className="footer" justify="space-between" py="5" wrap="wrap" gap="3">
-        <Text fontFamily="mono" fontSize="xs">CS HOME LAB / MATCH PLATFORM</Text>
+        <Text fontFamily="mono" fontSize="xs">FRAGHOUSE / CS2 MATCH PLATFORM</Text>
         <Text fontFamily="mono" fontSize="xs">LOGIN VIA STEAM OPENID</Text>
       </Flex>
     </Box>

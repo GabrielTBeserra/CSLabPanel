@@ -622,6 +622,204 @@ a:focus-visible {
   border-radius: 999px;
   background: rgba(255, 159, 28, 0.08);
 }
+.danger-button {
+  min-height: 34px;
+  padding-inline: 0.95rem !important;
+  border: 1px solid rgba(255, 77, 94, 0.55);
+  border-radius: 6px;
+  background: rgba(255, 77, 94, 0.12);
+  color: #ffb1ba;
+  font-family: var(--chakra-fonts-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+.danger-button:hover:not(:disabled) {
+  background: rgba(255, 77, 94, 0.25);
+  color: #fff;
+}
+.notice.is-error {
+  border-left-color: var(--chakra-colors-danger);
+  background: rgba(255, 77, 94, 0.1);
+}
+.toggle-field {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  margin-top: 1rem;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--chakra-colors-line);
+  border-radius: 8px;
+  background: rgba(8, 12, 17, 0.6);
+  cursor: pointer;
+}
+.toggle-field input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--chakra-colors-signal);
+}
+.toggle-field span {
+  display: grid;
+}
+.toggle-field small {
+  color: var(--chakra-colors-muted);
+}
+.server-state {
+  padding: 0.35rem 0.65rem;
+  border: 1px solid var(--chakra-colors-line);
+  border-radius: 6px;
+  background: rgba(10, 14, 19, 0.6);
+  color: var(--chakra-colors-muted);
+  font-family: var(--chakra-fonts-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
+}
+.server-state.is-live {
+  border-color: rgba(255, 77, 94, 0.6);
+  background: rgba(255, 77, 94, 0.15);
+  color: #ff8f9b;
+  animation: pulse-live 1.6s ease-in-out infinite;
+}
+.server-state.is-warmup,
+.server-state.is-loading {
+  border-color: rgba(245, 184, 61, 0.5);
+  color: var(--chakra-colors-t);
+}
+.server-state.is-paused,
+.server-state.is-map_end {
+  border-color: rgba(90, 169, 255, 0.5);
+  color: var(--chakra-colors-ct);
+}
+.server-state.is-finished {
+  border-color: rgba(61, 220, 151, 0.5);
+  color: var(--chakra-colors-pick);
+}
+.server-state.is-error {
+  border-color: var(--chakra-colors-danger);
+  color: var(--chakra-colors-danger);
+}
+@keyframes pulse-live {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 77, 94, 0.5); }
+  50% { box-shadow: 0 0 0 5px rgba(255, 77, 94, 0); }
+}
+.card-score-value,
+.live-digits {
+  font-family: var(--chakra-fonts-mono);
+  font-weight: 700;
+}
+.card-score-value {
+  font-size: 1.15rem;
+}
+.score-a,
+.team-a-text {
+  color: var(--chakra-colors-ct);
+}
+.score-b,
+.team-b-text {
+  color: var(--chakra-colors-t);
+}
+.live-score {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  background: linear-gradient(90deg, rgba(90, 169, 255, 0.18), rgba(10, 14, 19, 0.85) 35%, rgba(10, 14, 19, 0.85) 65%, rgba(245, 184, 61, 0.18)),
+    var(--match-art, none) center / cover;
+}
+.live-score.is-live {
+  border-color: rgba(255, 77, 94, 0.4);
+}
+.live-team {
+  font-size: clamp(1rem, 2.4vw, 1.5rem);
+  font-weight: 700;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.9);
+}
+.live-digits {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: clamp(2.6rem, 7vw, 4.5rem);
+  line-height: 1;
+  text-shadow: 0 4px 24px rgba(0, 0, 0, 0.9);
+  animation: score-pop 450ms cubic-bezier(0.2, 0.9, 0.3, 1.3);
+}
+.live-sep {
+  color: var(--chakra-colors-muted);
+  font-size: 0.6em;
+}
+@keyframes score-pop {
+  0% { transform: scale(1.25); filter: brightness(1.6); }
+  100% { transform: scale(1); filter: none; }
+}
+.winner-banner {
+  border: 1px solid rgba(61, 220, 151, 0.5);
+  border-radius: 10px;
+  background: linear-gradient(90deg, rgba(61, 220, 151, 0.18), rgba(61, 220, 151, 0.05));
+  color: #c9f8e2;
+  letter-spacing: 0.04em;
+}
+.connect-box {
+  border: 1px dashed rgba(255, 159, 28, 0.5);
+  border-radius: 10px;
+  background: rgba(255, 159, 28, 0.06);
+}
+.scoreboard {
+  overflow-x: auto;
+  padding: 0.75rem;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 10px;
+}
+.scoreboard.team-a {
+  background: linear-gradient(160deg, rgba(90, 169, 255, 0.1), transparent 60%);
+}
+.scoreboard.team-b {
+  background: linear-gradient(160deg, rgba(245, 184, 61, 0.1), transparent 60%);
+}
+.score-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+.score-table th {
+  padding: 0.35rem 0.4rem;
+  color: var(--chakra-colors-muted);
+  font-family: var(--chakra-fonts-mono);
+  font-size: 0.62rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-align: right;
+}
+.score-table td {
+  padding: 0.45rem 0.4rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  font-family: var(--chakra-fonts-mono);
+  text-align: right;
+}
+.score-table th:first-child,
+.score-table td.score-name {
+  font-family: var(--chakra-fonts-body);
+  font-weight: 700;
+  text-align: left;
+}
+.score-empty {
+  color: var(--chakra-colors-muted);
+  text-align: center !important;
+}
+.kill-row {
+  border-radius: 6px;
+  background: rgba(10, 14, 19, 0.55);
+  animation: rise 300ms ease both;
+}
+.kill-name {
+  font-weight: 700;
+}
+.team-x-text {
+  color: var(--chakra-colors-text);
+}
+.kill-weapon,
+.kill-round {
+  color: var(--chakra-colors-muted);
+}
 .brand-link {
   display: grid;
   padding: 0;
@@ -968,6 +1166,9 @@ a:focus-visible {
   .map-card.is-actionable,
   .veto-turn.is-mine,
   .logo-dot,
+  .server-state.is-live,
+  .live-digits,
+  .kill-row,
   .map-card.is-ban::after {
     animation: none !important;
   }

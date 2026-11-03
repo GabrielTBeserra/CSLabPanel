@@ -54,7 +54,13 @@ if (!["http:", "https:"].includes(origin.protocol) || origin.origin !== webOrigi
 }
 
 const database = postgresConfig ? new PostgresDatabase(postgresConfig) : null;
-const app = buildServer({ pluginToken, adminToken, webOrigin, superAdminSteamIds, database });
+const rcon = process.env.CS2_RCON_HOST && process.env.CS2_RCON_PASSWORD
+  ? { host: process.env.CS2_RCON_HOST, port: Number(process.env.CS2_RCON_PORT ?? 27015), password: process.env.CS2_RCON_PASSWORD }
+  : null;
+const pluginApiUrl = (process.env.PLUGIN_API_URL ?? "").replace(/\/+$/, "");
+const connectAddress = process.env.CS2_CONNECT_ADDRESS ?? "";
+
+const app = buildServer({ pluginToken, adminToken, webOrigin, superAdminSteamIds, database, rcon, pluginApiUrl, connectAddress });
 
 if (database) {
   app.addHook("onClose", async () => database.close());
