@@ -402,6 +402,22 @@ describe("Roles", () => {
     await app.close();
   });
 
+  it("lists players reported by the presence plugin even when status_json is empty", async () => {
+    const database = createDatabase();
+    database.findSessionUser = async () => ({ user: userWithRole("superadmin"), sessionId: "s1" });
+    const app = buildServer({
+      ...config, database, rcon: { host: "h", port: 1, password: "p" },
+      sendRcon: async () => JSON.stringify({ server: { clients: [{ steamid64: "0", bot: false, name: "" }] } }),
+    });
+    await app.inject({
+      method: "POST", url: "/api/plugin/heartbeat", headers: { authorization: "Bearer test-plugin-token" },
+      payload: { pluginVersion: "1.0.0", sentAt: new Date().toISOString(), players: [{ steamId: "76561198142791297", name: "MANO URSO" }] },
+    });
+    const response = await app.inject({ method: "GET", url: "/api/dynamic/players", headers: cookie });
+    assert.deepEqual(response.json().players.map((p: { name: string }) => p.name), ["MANO URSO"]);
+    await app.close();
+  });
+
   it("asks for confirmation before replacing a match running on the server", async () => {
     const database = createDatabase();
     database.findSessionUser = async () => ({ user: userWithRole("superadmin"), sessionId: "s1" });

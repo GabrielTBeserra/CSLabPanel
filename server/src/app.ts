@@ -127,6 +127,7 @@ const fetchSteamProfile = async (steamId: string): Promise<{ name: string; avata
 };
 
 const LOAD_CONFIRM_TIMEOUT_MS = 25000;
+const PLUGIN_PRESENCE_TTL_MS = 20000;
 const SESSION_COOKIE = "cshome_session";
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const STEAM_OPENID = "https://steamcommunity.com/openid/login";
@@ -167,10 +168,8 @@ export const buildServer = ({
 
   let connectedPlayers: ConnectedPlayer[] = [];
   let presenceKey = "";
-  const pollServerPresence = async () => {
-    if (!rcon) return;
-    const players = parseStatusJson(await sendRcon(rcon, "status_json"));
-    if (!players) return;
+  let lastPluginReportAt = 0;
+  const setConnectedPlayers = async (players: ConnectedPlayer[]) => {
     connectedPlayers = players;
     const key = players.map((p) => `${p.steamId}:${p.name}`).sort().join("|");
     if (database) await database.replaceServerPlayers(players);
@@ -178,6 +177,11 @@ export const buildServer = ({
       presenceKey = key;
       publish({ type: "presence" });
     }
+  };
+  const pollServerPresence = async () => {
+    if (!rcon || Date.now() - lastPluginReportAt < PLUGIN_PRESENCE_TTL_MS) return;
+    const players = parseStatusJson(await sendRcon(rcon, "status_json"));
+    if (players) await setConnectedPlayers(players);
   };
   if (presencePollMs > 0) {
     let timer: NodeJS.Timeout | undefined;
@@ -848,9 +852,9 @@ export const buildServer = ({
     },
     async (request, reply) => {
       const { players } = request.body as { players?: { steamId: string; name: string }[] };
-      if (database && players) {
-        await database.reportServerPlayers(players).catch((error) => request.log.warn(error, "Failed to record server players"));
-        publish({ type: "presence" });
+      if (players) {
+        lastPluginReportAt = Date.now();
+        await setConnectedPlayers(players).catch((error) => request.log.warn(error, "Failed to record server players"));
       }
       return reply.code(202).send({ accepted: true, receivedAt: new Date().toISOString() });
     },
