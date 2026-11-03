@@ -3,6 +3,7 @@ import { Badge, Box, Button, Flex, Heading, HStack, Stack, Text } from "@chakra-
 import {
   getMatch,
   inviteToMatch,
+  isStaff,
   sendVeto,
   setTeam,
   shuffleTeams,
@@ -99,7 +100,7 @@ export default function MatchRoom({ matchId, user, onBack }: { matchId: string; 
   const teamB = players.filter((p) => p.team === "b");
   const unassigned = players.filter((p) => p.team === null);
   const isMember = players.some((p) => p.userId === user.id);
-  const isCreator = match.createdBy === user.id;
+  const isCreator = match.createdBy === user.id || isStaff(user);
 
   return (
     <Stack gap="5" mx="auto" maxW="1100px">

@@ -9,10 +9,16 @@ export interface UserRecord {
   steamId: string;
   displayName: string;
   avatarUrl: string | null;
-  role: "player" | "admin";
+  role: UserRole;
   createdAt: string;
   lastSeenAt: string;
 }
+
+export type UserRole = "player" | "admin" | "superadmin";
+
+export const isStaff = (user: UserRecord) => user.role === "admin" || user.role === "superadmin";
+
+export const roleLabel: Record<UserRole, string> = { player: "JOGADOR", admin: "ADMIN", superadmin: "SUPER ADMIN" };
 
 export interface PresenceEntry {
   steamId: string;
@@ -152,6 +158,12 @@ export const setTeam = (matchId: string, team: "a" | "b") =>
 
 export const shuffleTeams = (matchId: string) =>
   request<{ shuffled: boolean }>(`/matches/${matchId}/shuffle`, { method: "POST" });
+
+export const listUsers = (signal?: AbortSignal) =>
+  request<{ users: UserRecord[] }>("/staff/users", { signal });
+
+export const setUserRole = (steamId: string, role: "player" | "admin") =>
+  request<{ steamId: string; role: UserRole }>(`/staff/users/${steamId}/role`, { method: "POST", body: JSON.stringify({ role }) });
 
 export const listInvites = (signal?: AbortSignal) =>
   request<{ invites: InviteRecord[] }>("/invites", { signal });

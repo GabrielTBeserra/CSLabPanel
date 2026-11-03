@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import type { FastifyInstance } from "fastify";
 import { buildServer } from "../src/app.js";
-import type { CreateMatchInput, MatchRecord, MatchStore } from "../src/database.js";
+import type { CreateMatchInput, MatchRecord, MatchStore, UserRecord, UserRole } from "../src/database.js";
 
 const match: MatchRecord = {
   id: "5ebf6bd8-eb48-45b7-bb7c-7e6f8b6f0f4e",
@@ -42,6 +42,9 @@ const createDatabase = (created: CreateMatchInput[] = []): MatchStore => ({
   }),
   updateUserProfile: async () => undefined,
   findUserBySteamId: async () => null,
+  listUsers: async () => [],
+  setUserRole: async () => undefined,
+  promoteSuperAdmins: async () => undefined,
   getMatchById: async () => match,
   setMatchPhase: async () => undefined,
   setMatchCaptains: async () => undefined,
@@ -192,5 +195,65 @@ describe("API foundation", () => {
 
     assert.equal(response.statusCode, 202);
     assert.equal(response.json().accepted, true);
+  });
+});
+
+describe("Roles", () => {
+  const userWithRole = (role: UserRole): UserRecord => ({
+    id: `user-${role}`, steamId: "76561198000000001", displayName: role, avatarUrl: null, role,
+    createdAt: new Date().toISOString(), lastSeenAt: new Date().toISOString(),
+  });
+  const target = { ...userWithRole("player"), id: "target", steamId: "76561198000000002" };
+  const buildAs = (role: UserRole, roleChanges: [string, UserRole][] = []) => {
+    const database = createDatabase();
+    database.findSessionUser = async () => ({ user: userWithRole(role), sessionId: "s1" });
+    database.findUserBySteamId = async (steamId) => (steamId === target.steamId ? target : null);
+    database.setUserRole = async (steamId, newRole) => { roleChanges.push([steamId, newRole]); };
+    return buildServer({ ...config, database });
+  };
+  const cookie = { cookie: "cshome_session=token" };
+
+  it("forbids players from listing users", async () => {
+    const app = buildAs("player");
+    const response = await app.inject({ method: "GET", url: "/api/staff/users", headers: cookie });
+    assert.equal(response.statusCode, 403);
+    await app.close();
+  });
+
+  it("allows admins to list users but not change roles", async () => {
+    const app = buildAs("admin");
+    assert.equal((await app.inject({ method: "GET", url: "/api/staff/users", headers: cookie })).statusCode, 200);
+    const response = await app.inject({
+      method: "POST", url: `/api/staff/users/${target.steamId}/role`, headers: cookie, payload: { role: "admin" },
+    });
+    assert.equal(response.statusCode, 403);
+    await app.close();
+  });
+
+  it("lets the super admin promote a player to admin", async () => {
+    const changes: [string, UserRole][] = [];
+    const app = buildAs("superadmin", changes);
+    const response = await app.inject({
+      method: "POST", url: `/api/staff/users/${target.steamId}/role`, headers: cookie, payload: { role: "admin" },
+    });
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(changes, [[target.steamId, "admin"]]);
+    await app.close();
+  });
+
+  it("never allows granting superadmin through the API", async () => {
+    const app = buildAs("superadmin");
+    const response = await app.inject({
+      method: "POST", url: `/api/staff/users/${target.steamId}/role`, headers: cookie, payload: { role: "superadmin" },
+    });
+    assert.equal(response.statusCode, 400);
+    await app.close();
+  });
+
+  it("lets admins shuffle a room they did not create", async () => {
+    const app = buildAs("admin");
+    const response = await app.inject({ method: "POST", url: `/api/matches/${match.id}/shuffle`, headers: cookie });
+    assert.equal(response.statusCode, 200);
+    await app.close();
   });
 });

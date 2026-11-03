@@ -4,6 +4,7 @@ import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import {
   hashSessionToken,
   type CreateMatchInput,
+  type MatchRecord,
   type MatchStore,
   type UserRecord,
 } from "./database.js";
@@ -12,8 +13,12 @@ export interface ServerConfig {
   pluginToken: string;
   adminToken: string;
   webOrigin: string;
+  superAdminSteamIds?: string[];
   database?: MatchStore | null;
 }
+
+const isStaff = (user: UserRecord) => user.role === "admin" || user.role === "superadmin";
+const canManageMatch = (match: MatchRecord, user: UserRecord) => match.createdBy === user.id || isStaff(user);
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -22,6 +27,7 @@ declare module "fastify" {
 }
 
 const unauthorized = { error: { code: "UNAUTHORIZED", message: "Authentication required" } };
+const forbidden = { error: { code: "FORBIDDEN", message: "Insufficient permissions" } };
 const invalidRequest = { error: { code: "VALIDATION_ERROR", message: "Invalid request" } };
 const databaseUnavailable = { error: { code: "DATABASE_UNAVAILABLE", message: "Database unavailable" } };
 
@@ -99,7 +105,7 @@ const parseCookies = (header: string | undefined): Record<string, string> => {
   return cookies;
 };
 
-export const buildServer = ({ pluginToken, adminToken, webOrigin, database = null }: ServerConfig) => {
+export const buildServer = ({ pluginToken, adminToken, webOrigin, superAdminSteamIds = [], database = null }: ServerConfig) => {
   const app = Fastify({ bodyLimit: 8192 });
   const secureCookie = webOrigin.startsWith("https:");
 
@@ -133,6 +139,12 @@ export const buildServer = ({ pluginToken, adminToken, webOrigin, database = nul
     if (!database) return reply.code(503).send(databaseUnavailable);
     const user = await sessionUser(request);
     if (!user) return reply.code(401).send(unauthorized);
+  };
+
+  const requireStaff = async (request: FastifyRequest, reply: FastifyReply) => {
+    await requireUser(request, reply);
+    if (reply.sent) return;
+    if (!isStaff(request.currentUser!)) return reply.code(403).send(forbidden);
   };
 
   const requireAdmin = async (request: FastifyRequest, reply: FastifyReply) => {
@@ -197,6 +209,7 @@ export const buildServer = ({ pluginToken, adminToken, webOrigin, database = nul
     }
 
     const user = await database.upsertSteamUser(steamId);
+    if (superAdminSteamIds.includes(steamId) && user.role !== "superadmin") await database.promoteSuperAdmins([steamId]);
     void fetchSteamProfile(steamId)
       .then((profile) => (profile ? database.updateUserProfile(steamId, profile.name, profile.avatar || null) : undefined))
       .catch(() => undefined);
@@ -283,7 +296,7 @@ export const buildServer = ({ pluginToken, adminToken, webOrigin, database = nul
     const { id } = request.params as { id: string };
     const match = await database.getMatchById(id);
     if (!match) return reply.code(404).send({ error: { code: "NOT_FOUND", message: "Match not found" } });
-    if (match.createdBy !== request.currentUser!.id) return reply.code(403).send(unauthorized);
+    if (!canManageMatch(match, request.currentUser!)) return reply.code(403).send(forbidden);
     if (match.phase !== "lobby") return reply.code(409).send({ error: { code: "INVALID_PHASE", message: "Teams are locked" } });
     const players = await database.listMatchPlayers(id);
     for (let i = players.length - 1; i > 0; i -= 1) {
@@ -299,7 +312,7 @@ export const buildServer = ({ pluginToken, adminToken, webOrigin, database = nul
     const { id } = request.params as { id: string };
     const match = await database.getMatchById(id);
     if (!match) return reply.code(404).send(invalidRequest);
-    if (match.createdBy !== request.currentUser!.id) return reply.code(403).send(unauthorized);
+    if (!canManageMatch(match, request.currentUser!)) return reply.code(403).send(forbidden);
     if (match.phase !== "lobby") return reply.code(409).send({ error: { code: "INVALID_PHASE", message: "Veto already started" } });
     const pool = match.mapPool.length >= 3 ? match.mapPool : ["de_mirage", "de_inferno", "de_nuke", "de_ancient", "de_anubis", "de_vertigo", "de_overpass"];
     const { captainBSteamId } = (request.body ?? {}) as { captainBSteamId?: string };
@@ -399,6 +412,33 @@ export const buildServer = ({ pluginToken, adminToken, webOrigin, database = nul
     await database.respondInvite(id, request.currentUser!.id, accept === true);
     return { responded: true };
   });
+
+  app.get("/api/staff/users", { onRequest: requireStaff }, async (_, reply) => {
+    if (!database) return reply.code(503).send(databaseUnavailable);
+    return { users: await database.listUsers() };
+  });
+
+  app.post(
+    "/api/staff/users/:steamId/role",
+    {
+      onRequest: requireStaff,
+      schema: {
+        params: { type: "object", required: ["steamId"], properties: { steamId: { type: "string", pattern: "^[0-9]{17}$" } } },
+        body: { type: "object", additionalProperties: false, required: ["role"], properties: { role: { type: "string", enum: ["player", "admin"] } } },
+      },
+    },
+    async (request, reply) => {
+      if (!database) return reply.code(503).send(databaseUnavailable);
+      if (request.currentUser!.role !== "superadmin") return reply.code(403).send(forbidden);
+      const { steamId } = request.params as { steamId: string };
+      const { role } = request.body as { role: "player" | "admin" };
+      const target = await database.findUserBySteamId(steamId);
+      if (!target) return reply.code(404).send({ error: { code: "NOT_FOUND", message: "User not found" } });
+      if (target.role === "superadmin") return reply.code(409).send({ error: { code: "PROTECTED_USER", message: "Super admin role cannot be changed" } });
+      await database.setUserRole(steamId, role);
+      return { steamId, role };
+    },
+  );
 
   app.get("/api/admin/matches", { onRequest: requireAdmin }, async (_, reply) => {
     if (!database) return reply.code(503).send(databaseUnavailable);

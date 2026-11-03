@@ -11,9 +11,12 @@ import {
   Stack,
   Text,
 } from "@chakra-ui/react";
+import AdminUsers from "./AdminUsers";
 import MatchRoom from "./MatchRoom";
 import {
   createMatch,
+  isStaff,
+  roleLabel,
   getApiHealth,
   getMe,
   getPresence,
@@ -286,6 +289,9 @@ export default function App() {
                 <Image alt={user.displayName} borderRadius="full" boxSize="8" src={user.avatarUrl} />
               ) : null}
               <Badge className="state-badge is-online">{user.displayName}</Badge>
+              {isStaff(user) ? (
+                <Button className="ghost-button" onClick={() => navigate("/admin")} size="xs">{roleLabel[user.role]}</Button>
+              ) : null}
               <Button className="ghost-button" onClick={() => { void logout().catch(() => undefined); setUser(null); setMatches([]); setInvites([]); }} size="xs">SAIR</Button>
             </HStack>
           ) : null}
@@ -307,6 +313,8 @@ export default function App() {
         ) : (
           roomMatch ? (
             <MatchRoom matchId={roomMatch} onBack={() => navigate("/")} user={user} />
+          ) : path === "/admin" && isStaff(user) ? (
+            <AdminUsers onBack={() => navigate("/")} user={user} />
           ) : (
           <Grid className="admin-layout" gap="5" templateColumns={{ base: "1fr", xl: "280px minmax(0, 1fr)" }}>
             <Stack className="admin-sidebar" gap="4">
@@ -418,7 +426,7 @@ export default function App() {
                     <Stack gap="3">
                       {matches.map((match) => {
                         const isMember = match.players?.some((p) => p.userId === user.id) ?? false;
-                        const isCreator = match.createdBy === user.id;
+                        const isCreator = match.createdBy === user.id || isStaff(user);
                         return (
                           <Box className="panel-card match-card" key={match.id} p="4">
                             <Flex align="center" justify="space-between" wrap="wrap" gap="3">

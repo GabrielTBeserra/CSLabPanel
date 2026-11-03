@@ -46,12 +46,14 @@ export interface VetoRecord {
   createdAt: string;
 }
 
+export type UserRole = "player" | "admin" | "superadmin";
+
 export interface UserRecord {
   id: string;
   steamId: string;
   displayName: string;
   avatarUrl: string | null;
-  role: "player" | "admin";
+  role: UserRole;
   createdAt: string;
   lastSeenAt: string;
 }
@@ -97,6 +99,9 @@ export interface MatchStore {
   upsertSteamUser(steamId: string): Promise<UserRecord>;
   updateUserProfile(steamId: string, displayName: string, avatarUrl: string | null): Promise<void>;
   findUserBySteamId(steamId: string): Promise<UserRecord | null>;
+  listUsers(): Promise<UserRecord[]>;
+  setUserRole(steamId: string, role: UserRole): Promise<void>;
+  promoteSuperAdmins(steamIds: string[]): Promise<void>;
   getMatchById(matchId: string): Promise<MatchRecord | null>;
   setMatchPhase(matchId: string, phase: MatchPhase): Promise<void>;
   setMatchCaptains(matchId: string, captainAId: string | null, captainBId: string | null): Promise<void>;
@@ -161,6 +166,8 @@ export class PostgresDatabase implements MatchStore {
         last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now()
       );
       ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT;
+      ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
+      ALTER TABLE users ADD CONSTRAINT users_role_check CHECK (role IN ('player', 'admin', 'superadmin'));
       CREATE TABLE IF NOT EXISTS sessions (
         id UUID PRIMARY KEY,
         token_hash TEXT NOT NULL UNIQUE,
@@ -272,6 +279,20 @@ export class PostgresDatabase implements MatchStore {
   async findUserBySteamId(steamId: string): Promise<UserRecord | null> {
     const r = await this.pool.query<Row>(`SELECT * FROM users WHERE steam_id = $1`, [steamId]);
     return r.rows[0] ? toUser(r.rows[0]) : null;
+  }
+
+  async listUsers(): Promise<UserRecord[]> {
+    const r = await this.pool.query<Row>(`SELECT * FROM users ORDER BY created_at LIMIT 500`);
+    return r.rows.map(toUser);
+  }
+
+  async setUserRole(steamId: string, role: UserRole): Promise<void> {
+    await this.pool.query(`UPDATE users SET role = $2 WHERE steam_id = $1`, [steamId, role]);
+  }
+
+  async promoteSuperAdmins(steamIds: string[]): Promise<void> {
+    if (steamIds.length === 0) return;
+    await this.pool.query(`UPDATE users SET role = 'superadmin' WHERE steam_id = ANY($1::text[])`, [steamIds]);
   }
 
   async updateUserProfile(steamId: string, displayName: string, avatarUrl: string | null): Promise<void> {

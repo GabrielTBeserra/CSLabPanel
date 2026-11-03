@@ -21,6 +21,10 @@ const postgresConfig: PoolConfig | null = databaseUrl
       }
     : null;
 const webOrigin = process.env.WEB_ORIGIN ?? "http://localhost:5173";
+const superAdminSteamIds = (process.env.SUPERADMIN_STEAM_IDS ?? "")
+  .split(",")
+  .map((id) => id.trim())
+  .filter((id) => /^[0-9]{17}$/.test(id));
 const isProduction = process.env.NODE_ENV === "production";
 
 if (!Number.isInteger(port) || port < 1 || port > 65535) {
@@ -50,14 +54,17 @@ if (!["http:", "https:"].includes(origin.protocol) || origin.origin !== webOrigi
 }
 
 const database = postgresConfig ? new PostgresDatabase(postgresConfig) : null;
-const app = buildServer({ pluginToken, adminToken, webOrigin, database });
+const app = buildServer({ pluginToken, adminToken, webOrigin, superAdminSteamIds, database });
 
 if (database) {
   app.addHook("onClose", async () => database.close());
 }
 
 try {
-  if (database) await database.migrate();
+  if (database) {
+    await database.migrate();
+    await database.promoteSuperAdmins(superAdminSteamIds);
+  }
   await app.listen({ port, host: "0.0.0.0" });
 } catch (error) {
   app.log.error(error);
