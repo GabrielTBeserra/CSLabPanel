@@ -136,6 +136,16 @@ describe("API foundation", () => {
     await readyApp.close();
   });
 
+  it("uses the tunnel hostname as Steam return origin only for trusted tunnel hosts", async () => {
+    const returnTo = async (host: string) => {
+      const response = await app.inject({ method: "GET", url: "/api/auth/steam", headers: { host } });
+      return new URL(response.headers.location as string).searchParams.get("openid.return_to");
+    };
+    assert.equal(await returnTo("abc-def.trycloudflare.com"), "https://abc-def.trycloudflare.com/api/auth/steam/return");
+    assert.equal(await returnTo("evil.example.com"), "http://localhost:5173/api/auth/steam/return");
+    assert.equal(await returnTo("trycloudflare.com.evil.com"), "http://localhost:5173/api/auth/steam/return");
+  });
+
   it("rejects admin requests without a valid bearer token", async () => {
     const response = await app.inject({ method: "GET", url: "/api/admin/matches" });
 

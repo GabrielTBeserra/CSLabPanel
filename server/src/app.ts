@@ -23,7 +23,10 @@ export interface ServerConfig {
   connectAddress?: string;
   sendRcon?: (config: RconConfig, command: string) => Promise<string>;
   presencePollMs?: number;
+  tunnelHostSuffixes?: string[];
 }
+
+const TUNNEL_HOST = /^[a-z0-9-]+(\.[a-z0-9-]+)+$/;
 
 const isStaff = (user: UserRecord) => user.role === "admin" || user.role === "superadmin";
 const canManageMatch = (match: MatchRecord, user: UserRecord) => match.createdBy === user.id || isStaff(user);
@@ -140,9 +143,16 @@ const parseCookies = (header: string | undefined): Record<string, string> => {
 export const buildServer = ({
   pluginToken, adminToken, webOrigin, superAdminSteamIds = [], database = null,
   rcon = null, pluginApiUrl = "", connectAddress = "", sendRcon = sendRconCommand, presencePollMs = 0,
+  tunnelHostSuffixes = [".trycloudflare.com"],
 }: ServerConfig) => {
   const app = Fastify({ bodyLimit: 8192 });
-  const secureCookie = webOrigin.startsWith("https:");
+  const webHost = new URL(webOrigin).host;
+  const requestOrigin = (request: FastifyRequest) => {
+    const forwarded = request.headers["x-forwarded-host"];
+    const host = String((Array.isArray(forwarded) ? forwarded[0] : forwarded) ?? request.headers.host ?? "").split(",")[0]!.trim().toLowerCase();
+    if (host && host !== webHost && tunnelHostSuffixes.some((suffix) => host.endsWith(suffix)) && TUNNEL_HOST.test(host)) return `https://${host}`;
+    return webOrigin;
+  };
   const bus = new RealtimeBus();
   const publish = (event: RealtimeEvent) => bus.publish(event);
   const publishMatch = (matchId: string) => { publish({ type: "match", matchId }); publish({ type: "matches" }); };
@@ -279,12 +289,13 @@ export const buildServer = ({
     return { status: "ready", service: "cshome-api", database: "connected", timestamp: new Date().toISOString() };
   });
 
-  app.get("/api/auth/steam", async (_, reply) => {
+  app.get("/api/auth/steam", async (request, reply) => {
+    const origin = requestOrigin(request);
     const params = new URLSearchParams({
       "openid.ns": "http://specs.openid.net/auth/2.0",
       "openid.mode": "checkid_setup",
-      "openid.return_to": `${webOrigin}/api/auth/steam/return`,
-      "openid.realm": webOrigin,
+      "openid.return_to": `${origin}/api/auth/steam/return`,
+      "openid.realm": origin,
       "openid.identity": "http://specs.openid.net/auth/2.0/identifier_select",
       "openid.claimed_id": "http://specs.openid.net/auth/2.0/identifier_select",
     });
@@ -297,7 +308,8 @@ export const buildServer = ({
     if (query["openid.mode"] !== "id_res") return reply.code(400).send(invalidRequest);
     const steamId = STEAM_CLAIMED.exec(query["openid.claimed_id"] ?? "")?.[1];
     if (!steamId) return reply.code(400).send(invalidRequest);
-    if (query["openid.return_to"] !== `${webOrigin}/api/auth/steam/return`) {
+    const origin = requestOrigin(request);
+    if (query["openid.return_to"] !== `${origin}/api/auth/steam/return`) {
       return reply.code(400).send(invalidRequest);
     }
 
@@ -327,7 +339,7 @@ export const buildServer = ({
     await database.createSession(user.id, hashSessionToken(token), new Date(Date.now() + SESSION_TTL_MS));
     reply.header(
       "Set-Cookie",
-      `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_TTL_MS / 1000}${secureCookie ? "; Secure" : ""}`,
+      `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_TTL_MS / 1000}${origin.startsWith("https:") ? "; Secure" : ""}`,
     );
     return reply.redirect("/");
   });
