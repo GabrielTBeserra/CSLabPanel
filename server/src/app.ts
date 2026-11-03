@@ -734,12 +734,12 @@ export const buildServer = ({
     },
   );
 
-  app.delete("/api/matches/:id", { onRequest: requireStaff }, async (request, reply) => {
+  app.delete("/api/matches/:id", { onRequest: requireUser }, async (request, reply) => {
     if (!database) return reply.code(503).send(databaseUnavailable);
-    if (request.currentUser!.role !== "superadmin") return reply.code(403).send(forbidden);
     const { id } = request.params as { id: string };
     const match = await database.getMatchById(id);
     if (!match) return reply.code(404).send(notFound);
+    if (!canManageMatch(match, request.currentUser!)) return reply.code(403).send(forbidden);
     const onServer = ["loading", "warmup", "live", "paused", "map_end"].includes(match.serverState);
     if (onServer && rcon) await sendRcon(rcon, "css_endmatch").catch(() => undefined);
     await database.deleteMatch(id);

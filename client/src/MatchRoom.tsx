@@ -365,7 +365,7 @@ export default function MatchRoom({ matchId, user, onBack }: { matchId: string; 
         </Box>
       ) : null}
 
-      {user.role === "superadmin" ? (
+      {isStaff(user) || match.createdBy === user.id ? (
         <Flex justify="flex-end">
           <Button
             className="danger-button"
