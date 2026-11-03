@@ -751,6 +751,82 @@ a:focus-visible {
 .dyn-summary {
   border-color: rgba(255, 159, 28, 0.35);
 }
+.level-ring {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 3px solid var(--lvl, #8d9aac);
+  border-radius: 50%;
+  color: var(--lvl, #8d9aac);
+  font-family: var(--chakra-fonts-mono);
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+.lvl-1, .lvl-2, .lvl-3 { --lvl: #9aa7b8; }
+.lvl-4, .lvl-5, .lvl-6, .lvl-7 { --lvl: var(--chakra-colors-t); }
+.lvl-8, .lvl-9 { --lvl: var(--chakra-colors-signal); }
+.lvl-10 { --lvl: var(--chakra-colors-danger); }
+.history-row {
+  position: relative;
+  display: flex;
+  overflow: hidden;
+  align-items: center;
+  gap: 1rem;
+  width: 100%;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--chakra-colors-line);
+  border-left: 4px solid var(--chakra-colors-line);
+  border-radius: 10px;
+  background: linear-gradient(90deg, rgba(13, 18, 25, 0.95) 45%, rgba(13, 18, 25, 0.6)), var(--match-art) center / cover;
+  color: var(--chakra-colors-text);
+  cursor: pointer;
+  flex-wrap: wrap;
+  transition: transform 160ms ease, border-color 160ms ease;
+}
+.history-row:hover {
+  transform: translateY(-2px);
+}
+.history-row.is-win { border-left-color: var(--chakra-colors-pick); }
+.history-row.is-loss { border-left-color: var(--chakra-colors-danger); }
+.result-badge, .elo-delta {
+  padding: 0.3rem 0.55rem;
+  border-radius: 6px;
+  font-family: var(--chakra-fonts-mono);
+  font-size: 0.62rem;
+}
+.result-badge.is-win, .elo-delta.is-up { background: rgba(61, 220, 151, 0.15); color: #9cf3cb; }
+.result-badge.is-loss, .elo-delta.is-down { background: rgba(255, 77, 94, 0.15); color: #ffb1ba; }
+.result-badge.is-draw { background: rgba(255, 255, 255, 0.08); color: var(--chakra-colors-muted); }
+.ranking-table tbody tr {
+  cursor: pointer;
+  transition: background 140ms ease;
+}
+.ranking-table tbody tr:hover { background: rgba(255, 159, 28, 0.06); }
+.ranking-table tr.is-top1 td:first-child { color: #ffd166; font-weight: 800; }
+.ranking-table tr.is-top2 td:first-child { color: #d9e2ec; font-weight: 800; }
+.ranking-table tr.is-top3 td:first-child { color: #e09f5a; font-weight: 800; }
+.stat-value {
+  margin-top: 0.3rem;
+  font-family: var(--chakra-fonts-mono);
+  font-size: 1.6rem;
+  font-weight: 800;
+}
+.profile-hero { border-color: rgba(255, 159, 28, 0.35); }
+.profile-avatar { width: 96px; height: 96px; font-size: 2rem; }
+.elo-chart { width: 100%; height: 120px; }
+.map-stat-row {
+  padding: 0.6rem 0.8rem;
+  border-radius: 8px;
+  background: linear-gradient(90deg, rgba(13, 18, 25, 0.92) 50%, rgba(13, 18, 25, 0.5)), var(--match-art) center / cover;
+}
+.mvp-card {
+  border-color: rgba(255, 209, 102, 0.5);
+  background: linear-gradient(135deg, rgba(255, 209, 102, 0.16), rgba(13, 18, 25, 0.9) 60%);
+}
+.user-chip { cursor: pointer; color: var(--chakra-colors-text); }
+.elo-up { color: var(--chakra-colors-pick); }
+.elo-down { color: var(--chakra-colors-danger); }
 .toggle-field {
   display: flex;
   align-items: center;

@@ -14,6 +14,7 @@ import {
 import AdminUsers from "./AdminUsers";
 import Backdrop from "./Backdrop";
 import DynamicMatch from "./DynamicMatch";
+import { HistoryPage, PlayerPage, RankingPage } from "./StatsPages";
 import Logo from "./Logo";
 import MatchRoom from "./MatchRoom";
 import { DEFAULT_POOL, MAPS, mapIcon, mapName, mapThumb } from "./maps";
@@ -229,6 +230,7 @@ export default function App() {
     return () => window.removeEventListener("popstate", onPop);
   }, []);
   const roomMatch = /^\/match\/([0-9a-f-]{36})$/.exec(path)?.[1] ?? null;
+  const playerRoute = /^\/jogador\/([0-9]{17})$/.exec(path)?.[1] ?? null;
 
   const [connection, setConnection] = useState<ConnectionState>("checking");
   const [user, setUser] = useState<UserRecord | null>(null);
@@ -389,7 +391,9 @@ export default function App() {
           >{muted ? "SOM: OFF" : "SOM: ON"}</Button>
           {user ? (
             <HStack gap="3" wrap="wrap">
-              <HStack className="user-chip" gap="2">
+              <Button className="ghost-button" onClick={() => navigate("/ranking")} size="xs">RANKING</Button>
+              <Button className="ghost-button" onClick={() => navigate("/historico")} size="xs">HISTÓRICO</Button>
+              <HStack as="button" className="user-chip" gap="2" onClick={() => navigate(`/jogador/${user.steamId}`)}>
                 {user.avatarUrl ? (
                   <Image alt="" borderRadius="full" boxSize="7" src={user.avatarUrl} />
                 ) : null}
@@ -424,6 +428,12 @@ export default function App() {
         ) : (
           roomMatch ? (
             <MatchRoom matchId={roomMatch} onBack={() => navigate("/")} user={user} />
+          ) : path === "/ranking" ? (
+            <RankingPage onBack={() => navigate("/")} onOpenPlayer={(id) => navigate(`/jogador/${id}`)} />
+          ) : path === "/historico" ? (
+            <HistoryPage onBack={() => navigate("/")} onOpenMatch={(id) => navigate(`/match/${id}`)} />
+          ) : playerRoute ? (
+            <PlayerPage onBack={() => window.history.back()} onOpenMatch={(id) => navigate(`/match/${id}`)} steamId={playerRoute} />
           ) : path === "/dinamico" && user.role === "superadmin" ? (
             <DynamicMatch onBack={() => navigate("/")} onStarted={(id) => navigate(`/match/${id}`)} />
           ) : path === "/admin" && isStaff(user) ? (

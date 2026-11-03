@@ -213,7 +213,7 @@ export const sendVeto = (matchId: string, payload: { action: "ban" | "pick"; map
   request<{ accepted?: boolean; finished?: boolean }>(`/matches/${matchId}/veto`, { method: "POST", body: JSON.stringify(payload) });
 
 export const getMatch = (matchId: string, signal?: AbortSignal) =>
-  request<{ match: MatchRecord; connectAddress: string | null }>(`/matches/${matchId}`, { signal });
+  request<{ match: MatchRecord; result: MatchResult | null; connectAddress: string | null }>(`/matches/${matchId}`, { signal });
 
 export const deleteMatch = (matchId: string) =>
   request<{ deleted: boolean }>(`/matches/${matchId}`, { method: "DELETE" });
@@ -223,6 +223,78 @@ export const loadMatchOnServer = (matchId: string) =>
 
 export const endMatchOnServer = (matchId: string) =>
   request<{ ended: boolean }>(`/matches/${matchId}/server/end`, { method: "POST" });
+
+export interface PlayerMatchStats {
+  steamId: string;
+  name: string;
+  team: "a" | "b";
+  kills: number;
+  deaths: number;
+  assists: number;
+  damage: number;
+  headshotKills: number;
+  won: boolean;
+  eloBefore: number | null;
+  eloAfter: number | null;
+}
+
+export interface MatchResult {
+  matchId: string;
+  winner: "a" | "b" | null;
+  scoreA: number;
+  scoreB: number;
+  rounds: number;
+  mapName: string;
+  mvpSteamId: string | null;
+  finishedAt: string;
+  players: PlayerMatchStats[];
+}
+
+export interface HistoryEntry {
+  matchId: string;
+  name: string;
+  teamAName: string;
+  teamBName: string;
+  mapName: string;
+  format: MatchFormat;
+  winner: "a" | "b" | null;
+  scoreA: number;
+  scoreB: number;
+  mvpName: string | null;
+  finishedAt: string;
+  player?: { team: "a" | "b"; kills: number; deaths: number; assists: number; won: boolean; eloDelta: number | null };
+}
+
+export interface RankingEntry {
+  steamId: string;
+  displayName: string;
+  avatarUrl: string | null;
+  elo: number;
+  level: number;
+  position?: number;
+  matches: number;
+  wins: number;
+  kills: number;
+  deaths: number;
+  headshotKills: number;
+  damage: number;
+  rounds: number;
+}
+
+export interface PlayerProfile extends RankingEntry {
+  assists: number;
+  mvps: number;
+  maps: { mapName: string; matches: number; wins: number }[];
+  eloHistory: { at: string; elo: number }[];
+}
+
+export const getHistory = (steamId?: string, signal?: AbortSignal) =>
+  request<{ matches: HistoryEntry[] }>(`/history${steamId ? `?steamId=${steamId}` : ""}`, { signal });
+
+export const getRankings = (signal?: AbortSignal) => request<{ rankings: RankingEntry[] }>("/rankings", { signal });
+
+export const getPlayerProfile = (steamId: string, signal?: AbortSignal) =>
+  request<{ profile: PlayerProfile; recent: HistoryEntry[] }>(`/players/${steamId}`, { signal });
 
 export interface DynamicPlayer {
   steamId: string;

@@ -18,6 +18,7 @@ import {
   startVeto,
   type MatchPlayer,
   type MatchRecord,
+  type MatchResult,
   type UserRecord,
 } from "./services/api";
 import { VetoBoard } from "./App";
@@ -93,9 +94,55 @@ function TeamPanel({
   );
 }
 
+function ResultPanel({ match, result }: { match: MatchRecord; result: MatchResult }) {
+  const mvp = result.players.find((p) => p.steamId === result.mvpSteamId);
+  const teamName = (t: "a" | "b") => (t === "a" ? match.teamAName : match.teamBName);
+  return (
+    <Stack className="panel-card rise-in" gap="4" p="5">
+      <Flex align="center" justify="space-between" wrap="wrap" gap="3">
+        <Box>
+          <Text className="card-kicker" fontFamily="mono" fontSize="xs">RESULTADO FINAL</Text>
+          <Heading as="h2" size="lg" mt="1">
+            {result.winner ? `${teamName(result.winner)} venceu` : "Empate"} · <span className="score-a">{result.scoreA}</span> : <span className="score-b">{result.scoreB}</span>
+          </Heading>
+        </Box>
+        {mvp ? (
+          <Box className="panel-card mvp-card" px="4" py="3">
+            <Text className="card-kicker" fontFamily="mono" fontSize="xs">MVP DA PARTIDA</Text>
+            <Text fontWeight="bold">{mvp.name} · {mvp.kills}/{mvp.deaths}/{mvp.assists}</Text>
+          </Box>
+        ) : null}
+      </Flex>
+      <Box overflowX="auto">
+        <table className="score-table">
+          <thead><tr><th>Jogador</th><th>Time</th><th>K</th><th>D</th><th>A</th><th>ADR</th><th>HS%</th><th>ELO</th></tr></thead>
+          <tbody>
+            {result.players.map((p) => {
+              const delta = p.eloAfter !== null && p.eloBefore !== null ? p.eloAfter - p.eloBefore : null;
+              return (
+                <tr key={p.steamId}>
+                  <td className="score-name">{p.name}{p.steamId === result.mvpSteamId ? " ★" : ""}</td>
+                  <td className={`team-${p.team}-text`}>{teamName(p.team)}</td>
+                  <td>{p.kills}</td>
+                  <td>{p.deaths}</td>
+                  <td>{p.assists}</td>
+                  <td>{result.rounds > 0 ? Math.round(p.damage / result.rounds) : 0}</td>
+                  <td>{p.kills > 0 ? Math.round((p.headshotKills / p.kills) * 100) : 0}</td>
+                  <td className={delta === null ? "" : delta >= 0 ? "elo-up" : "elo-down"}>{delta === null ? "—" : `${delta >= 0 ? "+" : ""}${delta}`}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </Box>
+    </Stack>
+  );
+}
+
 export default function MatchRoom({ matchId, user, onBack }: { matchId: string; user: UserRecord; onBack: () => void }) {
   const [match, setMatch] = useState<MatchRecord | null>(null);
   const [connectAddress, setConnectAddress] = useState<string | null>(null);
+  const [finalResult, setFinalResult] = useState<MatchResult | null>(null);
   const [feedback, setFeedback] = useState("");
   const [inviteSteamId, setInviteSteamId] = useState("");
   const [captainSteamId, setCaptainSteamId] = useState("");
@@ -105,6 +152,7 @@ export default function MatchRoom({ matchId, user, onBack }: { matchId: string; 
       const result = await getMatch(matchId, signal);
       if (signal?.aborted) return;
       setMatch(result.match);
+      setFinalResult(result.result);
       setConnectAddress(result.connectAddress);
     } catch (error) {
       if (signal?.aborted) return;
@@ -261,6 +309,8 @@ export default function MatchRoom({ matchId, user, onBack }: { matchId: string; 
           </Flex>
         </Box>
       ) : null}
+
+      {finalResult ? <ResultPanel match={match} result={finalResult} /> : null}
 
       {match.phase === "live" || match.phase === "finished" ? (
         <LivePanel
