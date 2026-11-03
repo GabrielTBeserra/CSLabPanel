@@ -278,6 +278,22 @@ export const buildServer = ({ pluginToken, adminToken, webOrigin, database = nul
     },
   );
 
+  app.post("/api/matches/:id/shuffle", { onRequest: requireUser }, async (request, reply) => {
+    if (!database) return reply.code(503).send(databaseUnavailable);
+    const { id } = request.params as { id: string };
+    const match = await database.getMatchById(id);
+    if (!match) return reply.code(404).send({ error: { code: "NOT_FOUND", message: "Match not found" } });
+    if (match.createdBy !== request.currentUser!.id) return reply.code(403).send(unauthorized);
+    if (match.phase !== "lobby") return reply.code(409).send({ error: { code: "INVALID_PHASE", message: "Teams are locked" } });
+    const players = await database.listMatchPlayers(id);
+    for (let i = players.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [players[i], players[j]] = [players[j]!, players[i]!];
+    }
+    await Promise.all(players.map((p, i) => database.setPlayerTeam(id, p.userId, i % 2 === 0 ? "a" : "b")));
+    return { shuffled: true, matchId: id };
+  });
+
   app.post("/api/matches/:id/veto/start", { onRequest: requireUser }, async (request, reply) => {
     if (!database) return reply.code(503).send(databaseUnavailable);
     const { id } = request.params as { id: string };

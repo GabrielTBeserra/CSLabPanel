@@ -5,6 +5,7 @@ import {
   inviteToMatch,
   sendVeto,
   setTeam,
+  shuffleTeams,
   startVeto,
   type MatchPlayer,
   type MatchRecord,
@@ -110,7 +111,20 @@ export default function MatchRoom({ matchId, user, onBack }: { matchId: string; 
             {match.format.toUpperCase()} · MR{match.maxRounds} · {match.id.slice(0, 8)}
           </Text>
         </Box>
-        <Badge className={`match-status is-${match.phase}`}>{phaseLabel[match.phase]}</Badge>
+        <HStack gap="2">
+          <Button
+            className="ghost-button"
+            onClick={() => {
+              const link = `${window.location.origin}/match/${match.id}`;
+              void navigator.clipboard?.writeText(link).then(
+                () => setFeedback("Link da sala copiado."),
+                () => setFeedback(link),
+              );
+            }}
+            size="xs"
+          >COPIAR LINK</Button>
+          <Badge className={`match-status is-${match.phase}`}>{phaseLabel[match.phase]}</Badge>
+        </HStack>
       </Flex>
 
       {feedback ? <Box className="notice" p="4"><Text>{feedback}</Text></Box> : null}
@@ -168,6 +182,11 @@ export default function MatchRoom({ matchId, user, onBack }: { matchId: string; 
             ) : null}
             {isCreator ? (
               <HStack gap="2" ml="auto">
+                <Button
+                  className="ghost-button"
+                  onClick={() => void act(() => shuffleTeams(match.id), "Times sorteados.")}
+                  size="sm"
+                >SORTEAR TIMES</Button>
                 <input
                   aria-label="SteamID64 do capitão B"
                   onChange={(e) => setCaptainSteamId(e.target.value)}

@@ -150,6 +150,9 @@ export const getMatch = (matchId: string, signal?: AbortSignal) =>
 export const setTeam = (matchId: string, team: "a" | "b") =>
   request<{ joined: boolean; team: string }>(`/matches/${matchId}/team`, { method: "POST", body: JSON.stringify({ team }) });
 
+export const shuffleTeams = (matchId: string) =>
+  request<{ shuffled: boolean }>(`/matches/${matchId}/shuffle`, { method: "POST" });
+
 export const listInvites = (signal?: AbortSignal) =>
   request<{ invites: InviteRecord[] }>("/invites", { signal });
 
