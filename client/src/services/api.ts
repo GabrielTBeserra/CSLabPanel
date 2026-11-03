@@ -251,6 +251,7 @@ export interface MatchResult {
   rounds: number;
   mapName: string;
   mvpSteamId: string | null;
+  worstSteamId: string | null;
   finishedAt: string;
   players: PlayerMatchStats[];
 }

@@ -260,7 +260,7 @@ describe("Match server integration", () => {
 
   it("records results, MVP and ELO when MatchZy reports the series end", async () => {
     const database = createDatabase();
-    const results: { winner: string | null; mvpSteamId: string | null; players: { steamId: string; eloAfter: number | null }[] }[] = [];
+    const results: { winner: string | null; mvpSteamId: string | null; worstSteamId: string | null; players: { steamId: string; eloAfter: number | null }[] }[] = [];
     database.getMatchByNumber = async () => ({
       ...match, serverState: "live",
       live: {
@@ -282,6 +282,7 @@ describe("Match server integration", () => {
     assert.equal(results.length, 1);
     assert.equal(results[0]!.winner, "a");
     assert.equal(results[0]!.mvpSteamId, "76561198000000001");
+    assert.equal(results[0]!.worstSteamId, "76561198000000002");
     assert.deepEqual(results[0]!.players.map((p) => p.eloAfter), [1016, 984]);
     await app.close();
   });

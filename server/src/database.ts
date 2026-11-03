@@ -215,6 +215,7 @@ export interface MatchResultInput {
   rounds: number;
   mapName: string;
   mvpSteamId: string | null;
+  worstSteamId: string | null;
   players: PlayerMatchStats[];
 }
 
@@ -399,6 +400,7 @@ export class PostgresDatabase implements MatchStore {
         PRIMARY KEY (match_id, steam_id)
       );
       CREATE INDEX IF NOT EXISTS match_player_stats_steam_idx ON match_player_stats (steam_id);
+      ALTER TABLE match_results ADD COLUMN IF NOT EXISTS worst_steam_id TEXT;
       CREATE TABLE IF NOT EXISTS server_players (
         steam_id TEXT PRIMARY KEY CHECK (steam_id ~ '^[0-9]{17}$'),
         display_name TEXT NOT NULL,
@@ -647,9 +649,9 @@ export class PostgresDatabase implements MatchStore {
     try {
       await client.query("BEGIN");
       const inserted = await client.query(
-        `INSERT INTO match_results (match_id, winner, score_a, score_b, rounds, map_name, mvp_steam_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (match_id) DO NOTHING RETURNING match_id`,
-        [result.matchId, result.winner, result.scoreA, result.scoreB, result.rounds, result.mapName, result.mvpSteamId],
+        `INSERT INTO match_results (match_id, winner, score_a, score_b, rounds, map_name, mvp_steam_id, worst_steam_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (match_id) DO NOTHING RETURNING match_id`,
+        [result.matchId, result.winner, result.scoreA, result.scoreB, result.rounds, result.mapName, result.mvpSteamId, result.worstSteamId],
       );
       if (inserted.rowCount === 0) {
         await client.query("ROLLBACK");
@@ -685,7 +687,7 @@ export class PostgresDatabase implements MatchStore {
     const stats = await this.pool.query<Row>(`SELECT * FROM match_player_stats WHERE match_id = $1 ORDER BY kills DESC`, [matchId]);
     return {
       matchId, winner: row.winner, scoreA: row.score_a, scoreB: row.score_b, rounds: row.rounds, mapName: row.map_name,
-      mvpSteamId: row.mvp_steam_id, finishedAt: iso(row.finished_at), players: stats.rows.map(this.toStats),
+      mvpSteamId: row.mvp_steam_id, worstSteamId: row.worst_steam_id ?? null, finishedAt: iso(row.finished_at), players: stats.rows.map(this.toStats),
     };
   }
 

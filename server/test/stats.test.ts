@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { addTotals } from "../src/live.js";
-import { eloChanges, levelFor, pickMvp } from "../src/stats.js";
+import { eloChanges, levelFor, pickMvp, pickWorst } from "../src/stats.js";
 
 const player = (steamId: string, team: "a" | "b", kills: number, deaths: number, damage: number) => ({
   steamId, name: steamId, team, kills, deaths, assists: 0, damage, headshotKills: 0,
@@ -23,6 +23,11 @@ describe("Stats and ELO", () => {
   it("picks the MVP by kills, damage and deaths per round", () => {
     assert.equal(pickMvp([player("1", "a", 10, 20, 900), player("2", "b", 25, 10, 2500)], 24), "2");
     assert.equal(pickMvp([], 10), null);
+  });
+
+  it("picks the worst player with the lowest rating, only with 2+ players", () => {
+    assert.equal(pickWorst([player("1", "a", 10, 20, 900), player("2", "b", 25, 10, 2500)], 24), "1");
+    assert.equal(pickWorst([player("1", "a", 10, 20, 900)], 24), null);
   });
 
   it("sums per-map stats for series totals", () => {

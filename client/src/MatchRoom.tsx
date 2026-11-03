@@ -97,6 +97,7 @@ function TeamPanel({
 
 function ResultPanel({ match, result }: { match: MatchRecord; result: MatchResult }) {
   const mvp = result.players.find((p) => p.steamId === result.mvpSteamId);
+  const worst = result.players.find((p) => p.steamId === result.worstSteamId);
   const teamName = (t: "a" | "b") => (t === "a" ? match.teamAName : match.teamBName);
   return (
     <Stack className="panel-card rise-in" gap="4" p="5">
@@ -107,12 +108,20 @@ function ResultPanel({ match, result }: { match: MatchRecord; result: MatchResul
             {result.winner ? `${teamName(result.winner)} venceu` : "Empate"} · <span className="score-a">{result.scoreA}</span> : <span className="score-b">{result.scoreB}</span>
           </Heading>
         </Box>
-        {mvp ? (
-          <Box className="panel-card mvp-card" px="4" py="3">
-            <Text className="card-kicker" fontFamily="mono" fontSize="xs">MVP DA PARTIDA</Text>
-            <Text fontWeight="bold">{mvp.name} · {mvp.kills}/{mvp.deaths}/{mvp.assists}</Text>
-          </Box>
-        ) : null}
+        <HStack gap="3" wrap="wrap">
+          {mvp ? (
+            <Box className="panel-card mvp-card" px="4" py="3">
+              <Text className="card-kicker" fontFamily="mono" fontSize="xs">MVP DA PARTIDA</Text>
+              <Text fontWeight="bold">{mvp.name} · {mvp.kills}/{mvp.deaths}/{mvp.assists}</Text>
+            </Box>
+          ) : null}
+          {worst ? (
+            <Box className="panel-card worst-card" px="4" py="3">
+              <Text className="card-kicker" fontFamily="mono" fontSize="xs">PIOR JOGADOR</Text>
+              <Text fontWeight="bold">{worst.name} · {worst.kills}/{worst.deaths}/{worst.assists}</Text>
+            </Box>
+          ) : null}
+        </HStack>
       </Flex>
       <Box overflowX="auto">
         <table className="score-table">
@@ -122,7 +131,7 @@ function ResultPanel({ match, result }: { match: MatchRecord; result: MatchResul
               const delta = p.eloAfter !== null && p.eloBefore !== null ? p.eloAfter - p.eloBefore : null;
               return (
                 <tr key={p.steamId}>
-                  <td className="score-name">{p.name}{p.steamId === result.mvpSteamId ? " ★" : ""}</td>
+                  <td className="score-name">{p.name}{p.steamId === result.mvpSteamId ? " ★" : ""}{p.steamId === result.worstSteamId ? " ▼" : ""}</td>
                   <td className={`team-${p.team}-text`}>{teamName(p.team)}</td>
                   <td>{p.kills}</td>
                   <td>{p.deaths}</td>

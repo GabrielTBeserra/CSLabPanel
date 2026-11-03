@@ -11,7 +11,7 @@ import {
 } from "./database.js";
 import { applyMatchzyEvent, buildMatchzyConfig, parseStatusJson, seriesMaps, type ConnectedPlayer } from "./live.js";
 import { quoteArg, sendRconCommand, type RconConfig } from "./rcon.js";
-import { eloChanges, levelFor, pickMvp } from "./stats.js";
+import { eloChanges, levelFor, pickMvp, pickWorst } from "./stats.js";
 import { RealtimeBus, type RealtimeEvent } from "./realtime.js";
 
 export interface ServerConfig {
@@ -804,7 +804,7 @@ export const buildServer = ({
       matchId: match.id, winner,
       scoreA: match.format === "bo3" ? live.seriesA ?? 0 : live.scoreA ?? 0,
       scoreB: match.format === "bo3" ? live.seriesB ?? 0 : live.scoreB ?? 0,
-      rounds, mapName: maps.join(", ") || match.mapName, mvpSteamId: pickMvp(players, rounds),
+      rounds, mapName: maps.join(", ") || match.mapName, mvpSteamId: pickMvp(players, rounds), worstSteamId: pickWorst(players, rounds),
       players: players.map((p) => {
         const before = elo.get(p.steamId) ?? null;
         const delta = changes.get(p.steamId);

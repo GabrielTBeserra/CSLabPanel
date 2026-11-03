@@ -45,3 +45,8 @@ export const pickMvp = (players: LivePlayer[], rounds: number): string | null =>
   if (players.length === 0) return null;
   return [...players].sort((x, y) => rating(y, rounds) - rating(x, rounds))[0]!.steamId;
 };
+
+export const pickWorst = (players: LivePlayer[], rounds: number): string | null => {
+  if (players.length < 2) return null;
+  return [...players].sort((x, y) => rating(x, rounds) - rating(y, rounds))[0]!.steamId;
+};

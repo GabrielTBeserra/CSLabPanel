@@ -824,6 +824,10 @@ a:focus-visible {
   border-color: rgba(255, 209, 102, 0.5);
   background: linear-gradient(135deg, rgba(255, 209, 102, 0.16), rgba(13, 18, 25, 0.9) 60%);
 }
+.worst-card {
+  border-color: rgba(255, 77, 94, 0.45);
+  background: linear-gradient(135deg, rgba(255, 77, 94, 0.14), rgba(13, 18, 25, 0.9) 60%);
+}
 .user-chip { cursor: pointer; color: var(--chakra-colors-text); }
 .elo-up { color: var(--chakra-colors-pick); }
 .elo-down { color: var(--chakra-colors-danger); }
