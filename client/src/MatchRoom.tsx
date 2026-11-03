@@ -225,7 +225,7 @@ export default function MatchRoom({ matchId, user, onBack }: { matchId: string; 
               </>
             ) : null}
             {isCreator ? (
-              <HStack gap="2" ml="auto">
+              <HStack gap="2" ml="auto" wrap="wrap">
                 <Button
                   className="ghost-button"
                   onClick={() => void act(() => shuffleTeams(match.id), "Times sorteados.", "start")}

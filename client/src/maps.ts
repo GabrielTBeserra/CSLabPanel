@@ -10,9 +10,10 @@ const NAMES: Record<string, string> = {
   de_overpass: "Overpass",
   de_dust2: "Dust II",
   de_train: "Train",
+  de_cache: "Cache",
 };
 
-export const MAPS = ["de_mirage", "de_inferno", "de_nuke", "de_ancient", "de_anubis", "de_vertigo", "de_overpass", "de_dust2", "de_train"];
+export const MAPS = ["de_mirage", "de_inferno", "de_nuke", "de_ancient", "de_anubis", "de_vertigo", "de_overpass", "de_dust2", "de_train", "de_cache"];
 
 export const DEFAULT_POOL = MAPS.slice(0, 7);
 

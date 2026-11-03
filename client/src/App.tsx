@@ -458,7 +458,7 @@ export default function App() {
                       <label className="field"><span>Time B</span><input required maxLength={64} onChange={(e) => setForm({ ...form, teamBName: e.target.value })} value={form.teamBName} /></label>
                     </Grid>
                     <label className="field"><span>Máximo de rounds</span><input min="1" max="30" onChange={(e) => setForm({ ...form, maxRounds: Number(e.target.value) })} type="number" value={form.maxRounds} /></label>
-                    <Button className="primary-button" disabled={isBusy || form.mapPool.length < 3} mt="2" type="submit">
+                    <Button className="primary-button" disabled={isBusy || form.mapPool.length < 3} mt="2" type="submit" w="full">
                       {isBusy ? "CRIANDO..." : "CRIAR PARTIDA"}
                     </Button>
                   </form>
@@ -505,7 +505,7 @@ export default function App() {
                               <Box>
                                 <Heading as="h3" size="md">{match.name}</Heading>
                                 <Text fontFamily="mono" fontSize="xs">
-                                  {match.format.toUpperCase()} · {match.teamAName} × {match.teamBName} · MR{match.maxRounds}
+                                  {match.format === "bo3" ? "MD3" : "MD1"} · {match.teamAName} × {match.teamBName} · MR{match.maxRounds}
                                 </Text>
                                 <Text fontSize="sm" mt="2">
                                   {match.players && match.players.length > 0
@@ -513,7 +513,7 @@ export default function App() {
                                     : "Sem jogadores ainda."}
                                 </Text>
                               </Box>
-                              <HStack gap="2">
+                              <HStack gap="2" wrap="wrap">
                                 <Badge className={`match-status is-${match.phase}`}>{phaseLabel[match.phase]}</Badge>
                                 <Button className="ghost-button" onClick={() => navigate(`/match/${match.id}`)} size="xs">SALA</Button>
                                 {match.phase === "lobby" && !isMember ? (

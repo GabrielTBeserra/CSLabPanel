@@ -49,7 +49,7 @@ const matchSchema = {
     teamBName: { type: "string", minLength: 1, maxLength: 64 },
     maxRounds: { type: "integer", minimum: 1, maximum: 30 },
     format: { type: "string", enum: ["bo1", "bo3"] },
-    mapPool: { type: "array", minItems: 3, maxItems: 9, uniqueItems: true, items: { type: "string", pattern: "^de_[a-z0-9_]+$" } },
+    mapPool: { type: "array", minItems: 3, maxItems: 10, uniqueItems: true, items: { type: "string", pattern: "^de_[a-z0-9_]+$" } },
   },
 } as const;
 
