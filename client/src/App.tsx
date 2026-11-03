@@ -11,11 +11,20 @@ import {
   Text,
 } from "@chakra-ui/react";
 import {
-  createAdminMatch,
+  createMatch,
   getApiHealth,
-  listAdminMatches,
-  type ApiHealth,
+  getMe,
+  getPresence,
+  inviteToMatch,
+  joinMatch,
+  listInvites,
+  listMatches,
+  logout,
+  respondInvite,
+  type InviteRecord,
   type MatchRecord,
+  type PresenceEntry,
+  type UserRecord,
 } from "./services/api";
 
 type ConnectionState = "checking" | "online" | "offline";
@@ -41,84 +50,144 @@ function ConnectionSignal({ state }: { state: ConnectionState }) {
   );
 }
 
+function PresenceList({ title, entries, empty }: { title: string; entries: PresenceEntry[]; empty: string }) {
+  return (
+    <Box className="panel-card" p="5">
+      <Text className="card-kicker" fontFamily="mono" fontSize="xs">{title}</Text>
+      {entries.length === 0 ? (
+        <Text className="admin-subtitle" mt="3">{empty}</Text>
+      ) : (
+        <Stack gap="2" mt="3">
+          {entries.map((entry) => (
+            <Flex key={entry.steamId} justify="space-between">
+              <Text>{entry.displayName}</Text>
+              <Text fontFamily="mono" fontSize="xs">{entry.steamId.slice(-6)}</Text>
+            </Flex>
+          ))}
+        </Stack>
+      )}
+    </Box>
+  );
+}
+
 export default function App() {
   const [connection, setConnection] = useState<ConnectionState>("checking");
-  const [health, setHealth] = useState<ApiHealth | null>(null);
-  const [adminToken, setAdminToken] = useState("");
+  const [user, setUser] = useState<UserRecord | null>(null);
+  const [userLoaded, setUserLoaded] = useState(false);
   const [matches, setMatches] = useState<MatchRecord[]>([]);
+  const [invites, setInvites] = useState<InviteRecord[]>([]);
+  const [siteOnline, setSiteOnline] = useState<PresenceEntry[]>([]);
+  const [serverOnline, setServerOnline] = useState<PresenceEntry[]>([]);
   const [form, setForm] = useState(initialForm);
   const [feedback, setFeedback] = useState("");
-  const [isLoadingMatches, setIsLoadingMatches] = useState(false);
-  const [isCreating, setIsCreating] = useState(false);
+  const [isBusy, setIsBusy] = useState(false);
+  const [inviteSteamId, setInviteSteamId] = useState("");
 
-  const loadMatches = useCallback(async (token = adminToken.trim(), signal?: AbortSignal) => {
-    if (!token) {
-      setMatches([]);
-      setFeedback("Informe o token administrativo para gerenciar partidas.");
-      return false;
-    }
-
-    setIsLoadingMatches(true);
+  const refresh = useCallback(async (signal?: AbortSignal) => {
     try {
-      const result = await listAdminMatches(token, signal);
-      if (signal?.aborted) return false;
-      setMatches(result.matches);
-      setFeedback("");
-      return true;
-    } catch (error) {
-      if (signal?.aborted) return false;
-      setMatches([]);
-      setFeedback(error instanceof Error && error.message === "UNAUTHORIZED" ? "Token administrativo inválido." : "Não foi possível carregar as partidas.");
-      return false;
-    } finally {
-      if (!signal?.aborted) setIsLoadingMatches(false);
+      const [matchResult, inviteResult, presence] = await Promise.all([
+        listMatches(signal),
+        listInvites(signal),
+        getPresence(signal),
+      ]);
+      if (signal?.aborted) return;
+      setMatches(matchResult.matches);
+      setInvites(inviteResult.invites);
+      setSiteOnline(presence.site);
+      setServerOnline(presence.server);
+    } catch {
+      if (!signal?.aborted) setFeedback("Não foi possível carregar os dados.");
     }
-  }, [adminToken]);
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
     getApiHealth(controller.signal)
-      .then((result) => {
-        setHealth(result);
-        setConnection("online");
+      .then(() => setConnection("online"))
+      .catch(() => { if (!controller.signal.aborted) setConnection("offline"); });
+    getMe(controller.signal)
+      .then((current) => {
+        setUser(current);
+        setUserLoaded(true);
+        if (current) void refresh(controller.signal);
       })
-      .catch(() => {
-        if (!controller.signal.aborted) setConnection("offline");
-      });
+      .catch(() => setUserLoaded(true));
     return () => controller.abort();
-  }, []);
-
+  }, [refresh]);
 
   const summary = useMemo(
     () => ({
       total: matches.length,
-      scheduled: matches.filter((match) => match.status === "scheduled").length,
-      live: matches.filter((match) => match.status === "live").length,
+      site: siteOnline.length,
+      server: serverOnline.length,
+      invites: invites.length,
     }),
-    [matches],
+    [matches, siteOnline, serverOnline, invites],
   );
 
   const submitMatch = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setIsCreating(true);
+    setIsBusy(true);
     setFeedback("");
-
     try {
-      const result = await createAdminMatch(adminToken.trim(), {
+      await createMatch({
         name: form.name.trim(),
         mapName: form.mapName,
         teamAName: form.teamAName.trim(),
         teamBName: form.teamBName.trim(),
         maxRounds: form.maxRounds,
       });
-      setMatches((current) => [result.match, ...current]);
       setForm({ ...initialForm, mapName: form.mapName });
       setFeedback("Partida criada com sucesso.");
-    } catch (error) {
-      setFeedback(error instanceof Error && error.message === "UNAUTHORIZED" ? "Token administrativo inválido." : "Não foi possível criar a partida.");
+      await refresh();
+    } catch {
+      setFeedback("Não foi possível criar a partida.");
     } finally {
-      setIsCreating(false);
+      setIsBusy(false);
     }
+  };
+
+  const handleJoin = async (matchId: string) => {
+    try {
+      await joinMatch(matchId);
+      setFeedback("Você entrou na partida.");
+      await refresh();
+    } catch {
+      setFeedback("Não foi possível entrar na partida.");
+    }
+  };
+
+  const handleInvite = async (matchId: string) => {
+    if (!/^\d{17}$/.test(inviteSteamId)) {
+      setFeedback("Informe um SteamID64 válido (17 dígitos).");
+      return;
+    }
+    try {
+      await inviteToMatch(matchId, inviteSteamId);
+      setInviteSteamId("");
+      setFeedback("Convite enviado.");
+      await refresh();
+    } catch {
+      setFeedback("Não foi possível enviar o convite.");
+    }
+  };
+
+  const handleRespond = async (inviteId: string, accept: boolean) => {
+    try {
+      await respondInvite(inviteId, accept);
+      await refresh();
+    } catch {
+      setFeedback("Não foi possível responder ao convite.");
+    }
+  };
+
+  const handleLogout = async () => {
+    await logout().catch(() => undefined);
+    setUser(null);
+    setMatches([]);
+    setInvites([]);
+    setSiteOnline([]);
+    setServerOnline([]);
   };
 
   return (
@@ -128,114 +197,153 @@ export default function App() {
           <Box aria-hidden="true" className="brand-mark">CS</Box>
           <Stack gap="0">
             <Text className="brand-name" fontSize="sm" fontWeight="bold">CS HOME LAB</Text>
-            <Text className="brand-caption" fontFamily="mono" fontSize="xs">ADMIN / MATCH CONTROL</Text>
+            <Text className="brand-caption" fontFamily="mono" fontSize="xs">MATCH PLATFORM</Text>
           </Stack>
         </HStack>
-        <ConnectionSignal state={connection} />
+        <HStack gap="4">
+          <ConnectionSignal state={connection} />
+          {user ? (
+            <HStack gap="3">
+              <Badge className="state-badge is-online">{user.displayName}</Badge>
+              <Button className="ghost-button" onClick={() => void handleLogout()} size="xs">SAIR</Button>
+            </HStack>
+          ) : null}
+        </HStack>
       </Flex>
 
       <Box as="main" className="admin-frame" py="8">
-        <Grid className="admin-layout" gap="5" templateColumns={{ base: "1fr", xl: "280px minmax(0, 1fr)" }}>
-          <Stack className="admin-sidebar" gap="4">
-            <Box className="panel-card" p="5">
-              <Text className="card-kicker" fontFamily="mono" fontSize="xs">ACESSO</Text>
-              <label className="field">
-                <span>Token administrativo</span>
-                <input
-                  autoComplete="off"
-                  onChange={(event) => setAdminToken(event.target.value)}
-                  placeholder="ADMIN_TOKEN"
-                  type="password"
-                  value={adminToken}
-                />
-              </label>
-              <Button className="primary-button" disabled={isLoadingMatches} mt="4" onClick={() => void loadMatches()} size="sm">
-                {isLoadingMatches ? "CARREGANDO" : "CONECTAR"}
-              </Button>
-            </Box>
-
-            <Box className="panel-card" p="5">
-              <Text className="card-kicker" fontFamily="mono" fontSize="xs">STATUS</Text>
-              <Stack gap="3" mt="4">
-                <Flex justify="space-between"><Text>API</Text><Badge className={`state-badge is-${connection}`}>{connection}</Badge></Flex>
-                <Flex justify="space-between"><Text>Serviço</Text><Text fontFamily="mono">{health?.service ?? "—"}</Text></Flex>
-                <Flex justify="space-between"><Text>Partidas</Text><Text fontFamily="mono">{summary.total}</Text></Flex>
-                <Flex justify="space-between"><Text>Agendadas</Text><Text fontFamily="mono">{summary.scheduled}</Text></Flex>
-                <Flex justify="space-between"><Text>Ao vivo</Text><Text fontFamily="mono">{summary.live}</Text></Flex>
-              </Stack>
-            </Box>
-          </Stack>
-
-          <Stack className="admin-content" gap="5">
-            <Flex align="end" justify="space-between" wrap="wrap" gap="4">
-              <Box>
-                <Text className="section-label" fontFamily="mono" fontSize="xs">OPERAÇÃO</Text>
-                <Heading className="admin-title" as="h1" size="3xl">Painel de partidas</Heading>
-                <Text className="admin-subtitle">Crie e acompanhe partidas do servidor CS2.</Text>
+        {!userLoaded ? null : !user ? (
+          <Box className="panel-card" mx="auto" maxW="560px" p="8" textAlign="center">
+            <Text className="card-kicker" fontFamily="mono" fontSize="xs">LOGIN NECESSÁRIO</Text>
+            <Heading as="h1" size="2xl" mt="3">Entre com sua Steam</Heading>
+            <Text className="admin-subtitle" mt="3">
+              Você precisa entrar com a Steam para criar partidas, receber convites e jogar.
+            </Text>
+            <Button asChild className="primary-button" mt="6" size="lg">
+              <a href="/api/auth/steam">ENTRAR COM STEAM</a>
+            </Button>
+          </Box>
+        ) : (
+          <Grid className="admin-layout" gap="5" templateColumns={{ base: "1fr", xl: "280px minmax(0, 1fr)" }}>
+            <Stack className="admin-sidebar" gap="4">
+              <PresenceList title="ONLINE NO SITE" entries={siteOnline} empty="Ninguém online no site." />
+              <PresenceList title="ONLINE NO CS2" entries={serverOnline} empty="Nenhum jogador reportado pelo plugin." />
+              <Box className="panel-card" p="5">
+                <Text className="card-kicker" fontFamily="mono" fontSize="xs">RESUMO</Text>
+                <Stack gap="3" mt="4">
+                  <Flex justify="space-between"><Text>Partidas</Text><Text fontFamily="mono">{summary.total}</Text></Flex>
+                  <Flex justify="space-between"><Text>Site</Text><Text fontFamily="mono">{summary.site}</Text></Flex>
+                  <Flex justify="space-between"><Text>CS2</Text><Text fontFamily="mono">{summary.server}</Text></Flex>
+                  <Flex justify="space-between"><Text>Convites</Text><Text fontFamily="mono">{summary.invites}</Text></Flex>
+                </Stack>
               </Box>
-              <Button className="ghost-button" disabled={isLoadingMatches || !adminToken} onClick={() => void loadMatches()} size="sm">
-                ATUALIZAR LISTA
-              </Button>
-            </Flex>
+            </Stack>
 
-            {feedback ? <Box className="notice" p="4"><Text>{feedback}</Text></Box> : null}
+            <Stack className="admin-content" gap="5">
+              <Flex align="end" justify="space-between" wrap="wrap" gap="4">
+                <Box>
+                  <Text className="section-label" fontFamily="mono" fontSize="xs">PARTIDAS</Text>
+                  <Heading className="admin-title" as="h1" size="3xl">Lobby</Heading>
+                  <Text className="admin-subtitle">Crie partidas, convide jogadores pelo SteamID64 e entre nos jogos.</Text>
+                </Box>
+                <Button className="ghost-button" disabled={isBusy} onClick={() => void refresh()} size="sm">
+                  ATUALIZAR
+                </Button>
+              </Flex>
 
-            <Grid gap="5" templateColumns={{ base: "1fr", lg: "minmax(320px, 0.85fr) minmax(0, 1.15fr)" }}>
-              <Box as="section" className="panel-card" p="6">
-                <Text className="card-kicker" fontFamily="mono" fontSize="xs">NOVA PARTIDA</Text>
-                <Heading as="h2" size="lg" mt="2">Criar partida</Heading>
-                <form className="match-form" onSubmit={submitMatch}>
-                  <label className="field"><span>Nome</span><input required maxLength={80} onChange={(e) => setForm({ ...form, name: e.target.value })} value={form.name} /></label>
-                  <label className="field"><span>Mapa</span><select onChange={(e) => setForm({ ...form, mapName: e.target.value })} value={form.mapName}>{maps.map((map) => <option key={map} value={map}>{map}</option>)}</select></label>
-                  <Grid gap="3" templateColumns="1fr 1fr">
-                    <label className="field"><span>Time A</span><input required maxLength={64} onChange={(e) => setForm({ ...form, teamAName: e.target.value })} value={form.teamAName} /></label>
-                    <label className="field"><span>Time B</span><input required maxLength={64} onChange={(e) => setForm({ ...form, teamBName: e.target.value })} value={form.teamBName} /></label>
-                  </Grid>
-                  <label className="field"><span>Máximo de rounds</span><input min="1" max="30" onChange={(e) => setForm({ ...form, maxRounds: Number(e.target.value) })} type="number" value={form.maxRounds} /></label>
-                  <Button className="primary-button" disabled={isCreating || !adminToken} mt="2" type="submit">
-                    {isCreating ? "CRIANDO..." : "CRIAR PARTIDA"}
-                  </Button>
-                </form>
-              </Box>
+              {feedback ? <Box className="notice" p="4"><Text>{feedback}</Text></Box> : null}
 
-              <Box as="section" className="panel-card" p="6">
-                <Flex align="center" justify="space-between" mb="4">
-                  <Box>
-                    <Text className="card-kicker" fontFamily="mono" fontSize="xs">REGISTROS</Text>
-                    <Heading as="h2" size="lg" mt="2">Partidas</Heading>
+              {invites.length > 0 ? (
+                <Box className="panel-card" p="5">
+                  <Text className="card-kicker" fontFamily="mono" fontSize="xs">CONVITES PENDENTES</Text>
+                  <Stack gap="3" mt="4">
+                    {invites.map((invite) => (
+                      <Flex key={invite.id} align="center" justify="space-between" wrap="wrap" gap="3">
+                        <Text>{invite.inviterName} convidou você para <strong>{invite.matchName}</strong></Text>
+                        <HStack gap="2">
+                          <Button className="primary-button" onClick={() => void handleRespond(invite.id, true)} size="xs">ACEITAR</Button>
+                          <Button className="ghost-button" onClick={() => void handleRespond(invite.id, false)} size="xs">RECUSAR</Button>
+                        </HStack>
+                      </Flex>
+                    ))}
+                  </Stack>
+                </Box>
+              ) : null}
+
+              <Grid gap="5" templateColumns={{ base: "1fr", lg: "minmax(320px, 0.85fr) minmax(0, 1.15fr)" }}>
+                <Box as="section" className="panel-card" p="6">
+                  <Text className="card-kicker" fontFamily="mono" fontSize="xs">NOVA PARTIDA</Text>
+                  <Heading as="h2" size="lg" mt="2">Criar partida</Heading>
+                  <form className="match-form" onSubmit={submitMatch}>
+                    <label className="field"><span>Nome</span><input required maxLength={80} onChange={(e) => setForm({ ...form, name: e.target.value })} value={form.name} /></label>
+                    <label className="field"><span>Mapa</span><select onChange={(e) => setForm({ ...form, mapName: e.target.value })} value={form.mapName}>{maps.map((map) => <option key={map} value={map}>{map}</option>)}</select></label>
+                    <Grid gap="3" templateColumns="1fr 1fr">
+                      <label className="field"><span>Time A</span><input required maxLength={64} onChange={(e) => setForm({ ...form, teamAName: e.target.value })} value={form.teamAName} /></label>
+                      <label className="field"><span>Time B</span><input required maxLength={64} onChange={(e) => setForm({ ...form, teamBName: e.target.value })} value={form.teamBName} /></label>
+                    </Grid>
+                    <label className="field"><span>Máximo de rounds</span><input min="1" max="30" onChange={(e) => setForm({ ...form, maxRounds: Number(e.target.value) })} type="number" value={form.maxRounds} /></label>
+                    <Button className="primary-button" disabled={isBusy} mt="2" type="submit">
+                      {isBusy ? "CRIANDO..." : "CRIAR PARTIDA"}
+                    </Button>
+                  </form>
+                </Box>
+
+                <Box as="section" className="panel-card" p="6">
+                  <Flex align="center" justify="space-between" mb="4">
+                    <Box>
+                      <Text className="card-kicker" fontFamily="mono" fontSize="xs">PARTIDAS</Text>
+                      <Heading as="h2" size="lg" mt="2">Disponíveis</Heading>
+                    </Box>
+                    <Badge className="state-badge">{summary.total}</Badge>
+                  </Flex>
+
+                  <Box className="field" mb="4">
+                    <span>Convidar por SteamID64</span>
+                    <input onChange={(e) => setInviteSteamId(e.target.value)} placeholder="7656119..." value={inviteSteamId} />
                   </Box>
-                  <Badge className="state-badge">{summary.total}</Badge>
-                </Flex>
 
-                {matches.length === 0 ? (
-                  <Box className="empty-state"><Text>Nenhuma partida carregada.</Text></Box>
-                ) : (
-                  <Box className="match-table-wrap">
-                    <table className="match-table">
-                      <thead><tr><th>Partida</th><th>Mapa</th><th>Times</th><th>MR</th><th>Status</th></tr></thead>
-                      <tbody>
-                        {matches.map((match) => (
-                          <tr key={match.id}>
-                            <td>{match.name}</td>
-                            <td>{match.mapName}</td>
-                            <td>{match.teamAName} × {match.teamBName}</td>
-                            <td>{match.maxRounds}</td>
-                            <td><span className={`match-status is-${match.status}`}>{match.status}</span></td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </Box>
-                )}
-              </Box>
-            </Grid>
-          </Stack>
-        </Grid>
+                  {matches.length === 0 ? (
+                    <Box className="empty-state"><Text>Nenhuma partida criada ainda.</Text></Box>
+                  ) : (
+                    <Stack gap="3">
+                      {matches.map((match) => {
+                        const isMember = match.players?.some((p) => p.userId === user.id) ?? false;
+                        return (
+                          <Box className="panel-card" key={match.id} p="4">
+                            <Flex align="center" justify="space-between" wrap="wrap" gap="3">
+                              <Box>
+                                <Heading as="h3" size="md">{match.name}</Heading>
+                                <Text fontFamily="mono" fontSize="xs">{match.mapName} · {match.teamAName} × {match.teamBName} · MR{match.maxRounds}</Text>
+                                <Text fontSize="sm" mt="2">
+                                  {match.players && match.players.length > 0
+                                    ? `Jogadores: ${match.players.map((p) => p.displayName).join(", ")}`
+                                    : "Sem jogadores ainda."}
+                                </Text>
+                              </Box>
+                              <HStack gap="2">
+                                <Badge className={`match-status is-${match.status}`}>{match.status}</Badge>
+                                {!isMember ? (
+                                  <Button className="primary-button" onClick={() => void handleJoin(match.id)} size="xs">ENTRAR</Button>
+                                ) : (
+                                  <Button className="ghost-button" onClick={() => void handleInvite(match.id)} size="xs">CONVIDAR</Button>
+                                )}
+                              </HStack>
+                            </Flex>
+                          </Box>
+                        );
+                      })}
+                    </Stack>
+                  )}
+                </Box>
+              </Grid>
+            </Stack>
+          </Grid>
+        )}
       </Box>
 
       <Flex as="footer" className="footer" justify="space-between" py="5" wrap="wrap" gap="3">
-        <Text fontFamily="mono" fontSize="xs">CS HOME LAB / ADMIN</Text>
-        <Text fontFamily="mono" fontSize="xs">API {health?.service ?? "—"}</Text>
+        <Text fontFamily="mono" fontSize="xs">CS HOME LAB / MATCH PLATFORM</Text>
+        <Text fontFamily="mono" fontSize="xs">LOGIN VIA STEAM OPENID</Text>
       </Flex>
     </Box>
   );

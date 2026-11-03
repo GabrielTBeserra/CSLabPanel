@@ -12,6 +12,7 @@ const match: MatchRecord = {
   teamBName: "Bravo",
   maxRounds: 24,
   status: "scheduled",
+  createdBy: null,
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
 };
@@ -24,6 +25,26 @@ const createDatabase = (created: CreateMatchInput[] = []): MatchStore => ({
     created.push(input);
     return match;
   },
+  upsertSteamUser: async (steamId) => ({
+    id: "user-1",
+    steamId,
+    displayName: `Jogador ${steamId.slice(-4)}`,
+    role: "player",
+    createdAt: new Date().toISOString(),
+    lastSeenAt: new Date().toISOString(),
+  }),
+  createSession: async () => undefined,
+  findSessionUser: async () => null,
+  touchSession: async () => undefined,
+  deleteSession: async () => undefined,
+  listOnlineUsers: async () => [],
+  reportServerPlayers: async () => undefined,
+  listServerPlayers: async () => [],
+  joinMatch: async () => undefined,
+  listMatchPlayers: async () => [],
+  createInvite: async () => undefined,
+  listInvitesForUser: async () => [],
+  respondInvite: async () => undefined,
 });
 
 const config = {

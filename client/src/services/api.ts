@@ -4,6 +4,29 @@ export interface ApiHealth {
   timestamp: string;
 }
 
+export interface UserRecord {
+  id: string;
+  steamId: string;
+  displayName: string;
+  role: "player" | "admin";
+  createdAt: string;
+  lastSeenAt: string;
+}
+
+export interface PresenceEntry {
+  steamId: string;
+  displayName: string;
+  lastSeenAt: string;
+}
+
+export interface MatchPlayer {
+  userId: string;
+  steamId: string;
+  displayName: string;
+  team: "a" | "b" | null;
+  joinedAt: string;
+}
+
 export interface MatchRecord {
   id: string;
   name: string;
@@ -12,8 +35,19 @@ export interface MatchRecord {
   teamBName: string;
   maxRounds: number;
   status: "scheduled" | "live" | "finished" | "cancelled";
+  createdBy: string | null;
   createdAt: string;
   updatedAt: string;
+  players?: MatchPlayer[];
+}
+
+export interface InviteRecord {
+  id: string;
+  matchId: string;
+  matchName: string;
+  inviterName: string;
+  status: string;
+  createdAt: string;
 }
 
 export interface CreateMatchInput {
@@ -28,44 +62,56 @@ const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || "/api").replace(/\/+$/,
 
 const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
   const response = await fetch(`${apiBaseUrl}${path}`, {
+    credentials: "include",
     ...init,
     headers: { Accept: "application/json", "Content-Type": "application/json", ...init?.headers },
   });
-
   if (!response.ok) {
     const payload = await response.json().catch(() => null);
-    const code = payload?.error?.code;
-    throw new Error(code || "API request failed");
+    throw new Error(payload?.error?.code || "API request failed");
   }
   return response.json() as Promise<T>;
 };
 
 const parseApiHealth = (value: unknown): ApiHealth => {
   if (typeof value !== "object" || value === null) throw new Error("Unexpected API response");
-  const payload = value as Record<string, unknown>;
-  if (
-    payload.status !== "ok" ||
-    typeof payload.service !== "string" ||
-    typeof payload.timestamp !== "string" ||
-    Number.isNaN(Date.parse(payload.timestamp))
-  ) {
+  const p = value as Record<string, unknown>;
+  if (p.status !== "ok" || typeof p.service !== "string" || typeof p.timestamp !== "string" || Number.isNaN(Date.parse(p.timestamp))) {
     throw new Error("Unexpected API response");
   }
-  return { status: "ok", service: payload.service, timestamp: payload.timestamp };
+  return { status: "ok", service: p.service, timestamp: p.timestamp };
 };
 
 export const getApiHealth = async (signal?: AbortSignal): Promise<ApiHealth> =>
   parseApiHealth(await request<ApiHealth>("/health", { signal }));
 
-export const listAdminMatches = async (token: string, signal?: AbortSignal) =>
-  request<{ matches: MatchRecord[] }>("/admin/matches", {
-    headers: { Authorization: `Bearer ${token}` },
-    signal,
-  });
+export const getMe = async (signal?: AbortSignal): Promise<UserRecord | null> => {
+  const response = await fetch(`${apiBaseUrl}/auth/me`, { credentials: "include", signal });
+  if (response.status === 401) return null;
+  if (!response.ok) throw new Error("API request failed");
+  const payload = (await response.json()) as { user: UserRecord };
+  return payload.user;
+};
 
-export const createAdminMatch = async (token: string, input: CreateMatchInput) =>
-  request<{ match: MatchRecord }>("/admin/matches", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}` },
-    body: JSON.stringify(input),
-  });
+export const logout = () => request<{ loggedOut: boolean }>("/auth/logout", { method: "POST" });
+
+export const getPresence = (signal?: AbortSignal) =>
+  request<{ site: PresenceEntry[]; server: PresenceEntry[] }>("/presence", { signal });
+
+export const listMatches = (signal?: AbortSignal) =>
+  request<{ matches: MatchRecord[] }>("/matches", { signal });
+
+export const createMatch = (input: CreateMatchInput) =>
+  request<{ match: MatchRecord }>("/matches", { method: "POST", body: JSON.stringify(input) });
+
+export const joinMatch = (matchId: string) =>
+  request<{ joined: boolean }>(`/matches/${matchId}/join`, { method: "POST" });
+
+export const inviteToMatch = (matchId: string, steamId: string) =>
+  request<{ invited: boolean }>(`/matches/${matchId}/invites`, { method: "POST", body: JSON.stringify({ steamId }) });
+
+export const listInvites = (signal?: AbortSignal) =>
+  request<{ invites: InviteRecord[] }>("/invites", { signal });
+
+export const respondInvite = (inviteId: string, accept: boolean) =>
+  request<{ responded: boolean }>(`/invites/${inviteId}/respond`, { method: "POST", body: JSON.stringify({ accept }) });
