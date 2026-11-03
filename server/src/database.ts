@@ -392,7 +392,8 @@ export class PostgresDatabase implements MatchStore {
         created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
         UNIQUE (match_id, invitee_id)
       );
-      ALTER TABLE users ADD COLUMN IF NOT EXISTS elo INTEGER NOT NULL DEFAULT 1000;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS elo INTEGER NOT NULL DEFAULT 300;
+      ALTER TABLE users ALTER COLUMN elo SET DEFAULT 300;
       CREATE TABLE IF NOT EXISTS match_results (
         match_id UUID PRIMARY KEY REFERENCES matches(id) ON DELETE CASCADE,
         winner TEXT CHECK (winner IN ('a', 'b')),

@@ -1,6 +1,6 @@
 import type { LivePlayer } from "./database.js";
 
-export const STARTING_ELO = 1000;
+export const STARTING_ELO = 300;
 const K_FACTOR = 32;
 
 const LEVEL_FLOORS = [0, 501, 751, 901, 1051, 1201, 1351, 1531, 1751, 2001];
