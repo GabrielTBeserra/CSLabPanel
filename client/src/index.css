@@ -174,7 +174,10 @@ a:focus-visible {
 }
 
 .state-badge {
-  border-color: var(--chakra-colors-line);
+  padding: 0.35rem 0.65rem;
+  border: 1px solid var(--chakra-colors-line);
+  border-radius: 6px;
+  background: rgba(10, 14, 19, 0.6);
   color: var(--chakra-colors-muted);
   font-family: var(--chakra-fonts-mono);
   font-size: 10px;
@@ -347,6 +350,8 @@ a:focus-visible {
 }
 
 .admin-title {
+  color: var(--chakra-colors-text);
+  text-shadow: 0 4px 24px rgba(0, 0, 0, 0.85);
   margin-top: 0.25rem;
   letter-spacing: -0.055em;
 }
@@ -389,6 +394,8 @@ a:focus-visible {
 
 .primary-button,
 .ghost-button {
+  min-height: 34px;
+  padding-inline: 0.95rem !important;
   border-radius: 0;
   font-family: var(--chakra-fonts-mono);
   font-size: 0.68rem;
@@ -484,7 +491,8 @@ a:focus-visible {
   font-family: var(--chakra-fonts-mono);
   font-size: 0.62rem;
   letter-spacing: 0.06em;
-  padding: 0.25rem 0.45rem;
+  padding: 0.35rem 0.65rem;
+  border-radius: 6px;
   text-transform: uppercase;
 }
 
@@ -533,7 +541,7 @@ a:focus-visible {
 .backdrop {
   position: fixed;
   inset: 0;
-  z-index: 0;
+  z-index: -1;
   overflow: hidden;
   pointer-events: none;
 }
@@ -598,6 +606,49 @@ a:focus-visible {
   z-index: 5;
   background: linear-gradient(180deg, rgba(10, 14, 19, 0.92), rgba(10, 14, 19, 0.6));
   backdrop-filter: blur(10px);
+}
+.topbar {
+  border: 1px solid rgba(38, 50, 68, 0.7);
+  border-top: 0;
+  border-radius: 0 0 12px 12px;
+}
+.connection-signal {
+  margin-right: 0.5rem;
+}
+.user-chip {
+  min-height: 34px;
+  padding: 0 0.85rem;
+  border: 1px solid rgba(255, 159, 28, 0.35);
+  border-radius: 999px;
+  background: rgba(255, 159, 28, 0.08);
+}
+.brand-link {
+  display: grid;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+.logo-mark {
+  filter: drop-shadow(0 0 14px rgba(255, 159, 28, 0.35));
+  transition: transform 200ms ease;
+}
+.brand-link:hover .logo-mark {
+  transform: rotate(-6deg) scale(1.05);
+}
+.logo-dot {
+  transform-origin: 24px 29px;
+  animation: logo-pulse 2.4s ease-in-out infinite;
+}
+@keyframes logo-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(0.7); }
+}
+.user-chip img {
+  margin-left: -0.6rem;
+}
+.admin-subtitle {
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.9);
 }
 .login-card {
   margin-top: 8vh;
@@ -916,6 +967,7 @@ a:focus-visible {
   .rise-in,
   .map-card.is-actionable,
   .veto-turn.is-mine,
+  .logo-dot,
   .map-card.is-ban::after {
     animation: none !important;
   }

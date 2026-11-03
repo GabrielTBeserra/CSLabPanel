@@ -13,6 +13,7 @@ import {
 } from "@chakra-ui/react";
 import AdminUsers from "./AdminUsers";
 import Backdrop from "./Backdrop";
+import Logo from "./Logo";
 import MatchRoom from "./MatchRoom";
 import { DEFAULT_POOL, MAPS, mapIcon, mapName, mapThumb } from "./maps";
 import { isMuted, onMutedChange, play, setMuted } from "./sound";
@@ -331,15 +332,17 @@ export default function App() {
   return (
     <Box className="console-shell" minH="100vh" px={{ base: "4", md: "8" }}>
       <Backdrop />
-      <Flex align="center" className="topbar" justify="space-between" py="5" wrap="wrap" gap="4">
+      <Flex align="center" className="topbar" justify="space-between" px={{ base: "4", md: "6" }} py="4" wrap="wrap" gap="4">
         <HStack align="center" gap="3">
-          <Box aria-hidden="true" className="brand-mark">CS</Box>
+          <Box as="button" aria-label="Ir para o lobby" className="brand-link" onClick={() => navigate("/")}>
+            <Logo size={42} />
+          </Box>
           <Stack gap="0">
             <Text className="brand-name" fontSize="sm" fontWeight="bold">CS HOME LAB</Text>
             <Text className="brand-caption" fontFamily="mono" fontSize="xs">MATCH PLATFORM</Text>
           </Stack>
         </HStack>
-        <HStack gap="4" wrap="wrap">
+        <HStack gap="3" wrap="wrap">
           <ConnectionSignal state={connection} />
           <Button
             aria-label={muted ? "Ativar sons" : "Silenciar sons"}
@@ -348,11 +351,13 @@ export default function App() {
             size="xs"
           >{muted ? "SOM: OFF" : "SOM: ON"}</Button>
           {user ? (
-            <HStack gap="3">
-              {user.avatarUrl ? (
-                <Image alt={user.displayName} borderRadius="full" boxSize="8" src={user.avatarUrl} />
-              ) : null}
-              <Badge className="state-badge is-online">{user.displayName}</Badge>
+            <HStack gap="3" wrap="wrap">
+              <HStack className="user-chip" gap="2">
+                {user.avatarUrl ? (
+                  <Image alt="" borderRadius="full" boxSize="7" src={user.avatarUrl} />
+                ) : null}
+                <Text fontSize="sm" fontWeight="bold">{user.displayName}</Text>
+              </HStack>
               {isStaff(user) ? (
                 <Button className="ghost-button" onClick={() => navigate("/admin")} size="xs">{roleLabel[user.role]}</Button>
               ) : null}
@@ -365,6 +370,7 @@ export default function App() {
       <Box as="main" className="admin-frame" py="8">
         {!userLoaded ? null : !user ? (
           <Box className="panel-card login-card rise-in" mx="auto" maxW="560px" p="8" textAlign="center">
+            <Flex justify="center" mb="5"><Logo size={76} /></Flex>
             <Text className="card-kicker" fontFamily="mono" fontSize="xs">LOGIN NECESSÁRIO</Text>
             <Heading as="h1" className="login-title" size="3xl" mt="3">Bora pro <span className="title-accent">servidor</span></Heading>
             <Text fontWeight="bold" mt="2">Entre com sua Steam</Text>
