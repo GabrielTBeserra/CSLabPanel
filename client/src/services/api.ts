@@ -4,13 +4,44 @@ export interface ApiHealth {
   timestamp: string;
 }
 
+export interface MatchRecord {
+  id: string;
+  name: string;
+  mapName: string;
+  teamAName: string;
+  teamBName: string;
+  maxRounds: number;
+  status: "scheduled" | "live" | "finished" | "cancelled";
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateMatchInput {
+  name: string;
+  mapName: string;
+  teamAName: string;
+  teamBName: string;
+  maxRounds: number;
+}
+
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || "/api").replace(/\/+$/, "");
 
-const parseApiHealth = (value: unknown): ApiHealth => {
-  if (typeof value !== "object" || value === null) {
-    throw new Error("Unexpected API response");
-  }
+const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
+  const response = await fetch(`${apiBaseUrl}${path}`, {
+    ...init,
+    headers: { Accept: "application/json", "Content-Type": "application/json", ...init?.headers },
+  });
 
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null);
+    const code = payload?.error?.code;
+    throw new Error(code || "API request failed");
+  }
+  return response.json() as Promise<T>;
+};
+
+const parseApiHealth = (value: unknown): ApiHealth => {
+  if (typeof value !== "object" || value === null) throw new Error("Unexpected API response");
   const payload = value as Record<string, unknown>;
   if (
     payload.status !== "ok" ||
@@ -20,20 +51,21 @@ const parseApiHealth = (value: unknown): ApiHealth => {
   ) {
     throw new Error("Unexpected API response");
   }
-
-  return {
-    status: "ok",
-    service: payload.service,
-    timestamp: payload.timestamp,
-  };
+  return { status: "ok", service: payload.service, timestamp: payload.timestamp };
 };
 
-export const getApiHealth = async (signal?: AbortSignal): Promise<ApiHealth> => {
-  const response = await fetch(`${apiBaseUrl}/health`, {
-    headers: { Accept: "application/json" },
+export const getApiHealth = async (signal?: AbortSignal): Promise<ApiHealth> =>
+  parseApiHealth(await request<ApiHealth>("/health", { signal }));
+
+export const listAdminMatches = async (token: string, signal?: AbortSignal) =>
+  request<{ matches: MatchRecord[] }>("/admin/matches", {
+    headers: { Authorization: `Bearer ${token}` },
     signal,
   });
 
-  if (!response.ok) throw new Error("API request failed");
-  return parseApiHealth(await response.json());
-};
+export const createAdminMatch = async (token: string, input: CreateMatchInput) =>
+  request<{ match: MatchRecord }>("/admin/matches", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(input),
+  });

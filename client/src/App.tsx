@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import {
   Badge,
   Box,
@@ -10,43 +10,32 @@ import {
   Stack,
   Text,
 } from "@chakra-ui/react";
-import { getApiHealth, type ApiHealth } from "./services/api";
+import {
+  createAdminMatch,
+  getApiHealth,
+  listAdminMatches,
+  type ApiHealth,
+  type MatchRecord,
+} from "./services/api";
 
 type ConnectionState = "checking" | "online" | "offline";
 
-const modules = [
-  {
-    code: "01",
-    name: "Interface",
-    description: "Base visual pronta para receber os fluxos do painel.",
-    status: "ESTRUTURA",
-  },
-  {
-    code: "02",
-    name: "Backend",
-    description: "API inicial com health check e contrato autenticado.",
-    status: "API",
-  },
-  {
-    code: "03",
-    name: "Plugin CS",
-    description: "Integração MatchZy será validada nesta fundação.",
-    status: "EM PREPARAÇÃO",
-  },
-];
+const maps = ["de_mirage", "de_inferno", "de_nuke", "de_ancient", "de_anubis", "de_vertigo", "de_overpass"];
+
+const initialForm = {
+  name: "",
+  mapName: "de_mirage",
+  teamAName: "Time A",
+  teamBName: "Time B",
+  maxRounds: 24,
+};
 
 function ConnectionSignal({ state }: { state: ConnectionState }) {
-  const label = {
-    checking: "Verificando API",
-    online: "API conectada",
-    offline: "API indisponível",
-  }[state];
-
   return (
     <HStack className={`connection-signal is-${state}`} gap="2">
       <Box aria-hidden="true" className="signal-dot" />
       <Text fontFamily="mono" fontSize="xs" textTransform="uppercase">
-        {label}
+        {state === "online" ? "API conectada" : state === "offline" ? "API indisponível" : "Verificando API"}
       </Text>
     </HStack>
   );
@@ -55,24 +44,36 @@ function ConnectionSignal({ state }: { state: ConnectionState }) {
 export default function App() {
   const [connection, setConnection] = useState<ConnectionState>("checking");
   const [health, setHealth] = useState<ApiHealth | null>(null);
-  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [adminToken, setAdminToken] = useState("");
+  const [matches, setMatches] = useState<MatchRecord[]>([]);
+  const [form, setForm] = useState(initialForm);
+  const [feedback, setFeedback] = useState("");
+  const [isLoadingMatches, setIsLoadingMatches] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
 
-  const refreshHealth = useCallback(async (signal?: AbortSignal) => {
-    setIsRefreshing(true);
-
-    try {
-      const result = await getApiHealth(signal);
-      if (signal?.aborted) return;
-      setHealth(result);
-      setConnection("online");
-    } catch {
-      if (signal?.aborted) return;
-      setHealth(null);
-      setConnection("offline");
-    } finally {
-      if (!signal?.aborted) setIsRefreshing(false);
+  const loadMatches = useCallback(async (token = adminToken.trim(), signal?: AbortSignal) => {
+    if (!token) {
+      setMatches([]);
+      setFeedback("Informe o token administrativo para gerenciar partidas.");
+      return false;
     }
-  }, []);
+
+    setIsLoadingMatches(true);
+    try {
+      const result = await listAdminMatches(token, signal);
+      if (signal?.aborted) return false;
+      setMatches(result.matches);
+      setFeedback("");
+      return true;
+    } catch (error) {
+      if (signal?.aborted) return false;
+      setMatches([]);
+      setFeedback(error instanceof Error && error.message === "UNAUTHORIZED" ? "Token administrativo inválido." : "Não foi possível carregar as partidas.");
+      return false;
+    } finally {
+      if (!signal?.aborted) setIsLoadingMatches(false);
+    }
+  }, [adminToken]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -87,163 +88,154 @@ export default function App() {
     return () => controller.abort();
   }, []);
 
-  const lastChecked = health
-    ? new Intl.DateTimeFormat("pt-BR", {
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-      }).format(new Date(health.timestamp))
-    : "—";
+
+  const summary = useMemo(
+    () => ({
+      total: matches.length,
+      scheduled: matches.filter((match) => match.status === "scheduled").length,
+      live: matches.filter((match) => match.status === "live").length,
+    }),
+    [matches],
+  );
+
+  const submitMatch = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setIsCreating(true);
+    setFeedback("");
+
+    try {
+      const result = await createAdminMatch(adminToken.trim(), {
+        name: form.name.trim(),
+        mapName: form.mapName,
+        teamAName: form.teamAName.trim(),
+        teamBName: form.teamBName.trim(),
+        maxRounds: form.maxRounds,
+      });
+      setMatches((current) => [result.match, ...current]);
+      setForm({ ...initialForm, mapName: form.mapName });
+      setFeedback("Partida criada com sucesso.");
+    } catch (error) {
+      setFeedback(error instanceof Error && error.message === "UNAUTHORIZED" ? "Token administrativo inválido." : "Não foi possível criar a partida.");
+    } finally {
+      setIsCreating(false);
+    }
+  };
 
   return (
-    <Box className="console-shell" minH="100vh" px={{ base: "5", md: "9" }}>
-      <Flex align="center" className="topbar" justify="space-between" py="6">
+    <Box className="console-shell" minH="100vh" px={{ base: "4", md: "8" }}>
+      <Flex align="center" className="topbar" justify="space-between" py="5" wrap="wrap" gap="4">
         <HStack align="center" gap="3">
-          <Box aria-hidden="true" className="brand-mark">
-            CS
-          </Box>
+          <Box aria-hidden="true" className="brand-mark">CS</Box>
           <Stack gap="0">
-            <Text className="brand-name" fontSize="sm" fontWeight="bold">
-              CS HOME LAB
-            </Text>
-            <Text className="brand-caption" fontFamily="mono" fontSize="xs">
-              CONTROL PLANE / 001
-            </Text>
+            <Text className="brand-name" fontSize="sm" fontWeight="bold">CS HOME LAB</Text>
+            <Text className="brand-caption" fontFamily="mono" fontSize="xs">ADMIN / MATCH CONTROL</Text>
           </Stack>
         </HStack>
-
         <ConnectionSignal state={connection} />
       </Flex>
 
-      <Box as="main" className="main-frame" pb="12" pt={{ base: "12", md: "20" }}>
-        <Grid
-          alignItems="end"
-          className="hero-grid"
-          gap={{ base: "10", lg: "16" }}
-          templateColumns={{
-            base: "1fr",
-            lg: "minmax(0, 1.25fr) minmax(18rem, 0.75fr)",
-          }}
-        >
-          <Stack className="hero-copy" gap="6">
-            <HStack className="eyebrow" gap="3">
-              <Text fontFamily="mono" fontSize="xs">
-                FOUNDATION BUILD
-              </Text>
-              <Box aria-hidden="true" className="eyebrow-line" />
-              <Text fontFamily="mono" fontSize="xs">
-                00—01
-              </Text>
-            </HStack>
+      <Box as="main" className="admin-frame" py="8">
+        <Grid className="admin-layout" gap="5" templateColumns={{ base: "1fr", xl: "280px minmax(0, 1fr)" }}>
+          <Stack className="admin-sidebar" gap="4">
+            <Box className="panel-card" p="5">
+              <Text className="card-kicker" fontFamily="mono" fontSize="xs">ACESSO</Text>
+              <label className="field">
+                <span>Token administrativo</span>
+                <input
+                  autoComplete="off"
+                  onChange={(event) => setAdminToken(event.target.value)}
+                  placeholder="ADMIN_TOKEN"
+                  type="password"
+                  value={adminToken}
+                />
+              </label>
+              <Button className="primary-button" disabled={isLoadingMatches} mt="4" onClick={() => void loadMatches()} size="sm">
+                {isLoadingMatches ? "CARREGANDO" : "CONECTAR"}
+              </Button>
+            </Box>
 
-            <Heading className="hero-title" as="h1" size="4xl">
-              O painel começa
-              <br />
-              <Box as="span" className="title-accent">
-                pelo essencial.
-              </Box>
-            </Heading>
-
-            <Text className="hero-description" maxW="38rem">
-              Estrutura nova para conectar o painel ao servidor CS2. As
-              funcionalidades serão definidas com você depois desta fundação.
-            </Text>
+            <Box className="panel-card" p="5">
+              <Text className="card-kicker" fontFamily="mono" fontSize="xs">STATUS</Text>
+              <Stack gap="3" mt="4">
+                <Flex justify="space-between"><Text>API</Text><Badge className={`state-badge is-${connection}`}>{connection}</Badge></Flex>
+                <Flex justify="space-between"><Text>Serviço</Text><Text fontFamily="mono">{health?.service ?? "—"}</Text></Flex>
+                <Flex justify="space-between"><Text>Partidas</Text><Text fontFamily="mono">{summary.total}</Text></Flex>
+                <Flex justify="space-between"><Text>Agendadas</Text><Text fontFamily="mono">{summary.scheduled}</Text></Flex>
+                <Flex justify="space-between"><Text>Ao vivo</Text><Text fontFamily="mono">{summary.live}</Text></Flex>
+              </Stack>
+            </Box>
           </Stack>
 
-          <Box className="api-card" p={{ base: "5", md: "7" }}>
-            <Flex align="start" justify="space-between">
-              <Stack gap="1">
-                <Text className="card-kicker" fontFamily="mono" fontSize="xs">
-                  SERVICE / API
-                </Text>
-                <Heading as="h2" className="api-title" size="lg">
-                  Backend base
-                </Heading>
-              </Stack>
-              <Badge className={`state-badge is-${connection}`} variant="outline">
-                {connection === "online"
-                  ? "ONLINE"
-                  : connection === "offline"
-                    ? "OFFLINE"
-                    : "CHECK"}
-              </Badge>
-            </Flex>
-
-            <Box aria-hidden="true" className="api-visual">
-              <Box className="api-visual-core" />
-              <Box className="api-visual-ring ring-one" />
-              <Box className="api-visual-ring ring-two" />
-              <Text className="api-visual-label" fontFamily="mono" fontSize="xs">
-                HTTP / READY
-              </Text>
-            </Box>
-
-            <Flex align="center" justify="space-between" mt="5">
-              <Text className="last-check" fontFamily="mono" fontSize="xs">
-                ÚLTIMA CHECAGEM {lastChecked}
-              </Text>
-              <Button
-                className="refresh-button"
-                disabled={isRefreshing}
-                onClick={() => void refreshHealth()}
-                size="sm"
-                variant="outline"
-              >
-                {isRefreshing ? "CHECANDO" : "ATUALIZAR"}
+          <Stack className="admin-content" gap="5">
+            <Flex align="end" justify="space-between" wrap="wrap" gap="4">
+              <Box>
+                <Text className="section-label" fontFamily="mono" fontSize="xs">OPERAÇÃO</Text>
+                <Heading className="admin-title" as="h1" size="3xl">Painel de partidas</Heading>
+                <Text className="admin-subtitle">Crie e acompanhe partidas do servidor CS2.</Text>
+              </Box>
+              <Button className="ghost-button" disabled={isLoadingMatches || !adminToken} onClick={() => void loadMatches()} size="sm">
+                ATUALIZAR LISTA
               </Button>
             </Flex>
-          </Box>
+
+            {feedback ? <Box className="notice" p="4"><Text>{feedback}</Text></Box> : null}
+
+            <Grid gap="5" templateColumns={{ base: "1fr", lg: "minmax(320px, 0.85fr) minmax(0, 1.15fr)" }}>
+              <Box as="section" className="panel-card" p="6">
+                <Text className="card-kicker" fontFamily="mono" fontSize="xs">NOVA PARTIDA</Text>
+                <Heading as="h2" size="lg" mt="2">Criar partida</Heading>
+                <form className="match-form" onSubmit={submitMatch}>
+                  <label className="field"><span>Nome</span><input required maxLength={80} onChange={(e) => setForm({ ...form, name: e.target.value })} value={form.name} /></label>
+                  <label className="field"><span>Mapa</span><select onChange={(e) => setForm({ ...form, mapName: e.target.value })} value={form.mapName}>{maps.map((map) => <option key={map} value={map}>{map}</option>)}</select></label>
+                  <Grid gap="3" templateColumns="1fr 1fr">
+                    <label className="field"><span>Time A</span><input required maxLength={64} onChange={(e) => setForm({ ...form, teamAName: e.target.value })} value={form.teamAName} /></label>
+                    <label className="field"><span>Time B</span><input required maxLength={64} onChange={(e) => setForm({ ...form, teamBName: e.target.value })} value={form.teamBName} /></label>
+                  </Grid>
+                  <label className="field"><span>Máximo de rounds</span><input min="1" max="30" onChange={(e) => setForm({ ...form, maxRounds: Number(e.target.value) })} type="number" value={form.maxRounds} /></label>
+                  <Button className="primary-button" disabled={isCreating || !adminToken} mt="2" type="submit">
+                    {isCreating ? "CRIANDO..." : "CRIAR PARTIDA"}
+                  </Button>
+                </form>
+              </Box>
+
+              <Box as="section" className="panel-card" p="6">
+                <Flex align="center" justify="space-between" mb="4">
+                  <Box>
+                    <Text className="card-kicker" fontFamily="mono" fontSize="xs">REGISTROS</Text>
+                    <Heading as="h2" size="lg" mt="2">Partidas</Heading>
+                  </Box>
+                  <Badge className="state-badge">{summary.total}</Badge>
+                </Flex>
+
+                {matches.length === 0 ? (
+                  <Box className="empty-state"><Text>Nenhuma partida carregada.</Text></Box>
+                ) : (
+                  <Box className="match-table-wrap">
+                    <table className="match-table">
+                      <thead><tr><th>Partida</th><th>Mapa</th><th>Times</th><th>MR</th><th>Status</th></tr></thead>
+                      <tbody>
+                        {matches.map((match) => (
+                          <tr key={match.id}>
+                            <td>{match.name}</td>
+                            <td>{match.mapName}</td>
+                            <td>{match.teamAName} × {match.teamBName}</td>
+                            <td>{match.maxRounds}</td>
+                            <td><span className={`match-status is-${match.status}`}>{match.status}</span></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </Box>
+                )}
+              </Box>
+            </Grid>
+          </Stack>
         </Grid>
-
-        <Box className="section-heading" mt={{ base: "16", md: "24" }} mb="5">
-          <Text className="section-label" fontFamily="mono" fontSize="xs">
-            COMPONENTES DA BASE
-          </Text>
-          <Box aria-hidden="true" className="section-rule" />
-        </Box>
-
-        <Grid
-          className="module-grid"
-          gap="3"
-          templateColumns={{ base: "1fr", md: "repeat(3, minmax(0, 1fr))" }}
-        >
-          {modules.map((module) => (
-            <Box className="module-card" key={module.code} p={{ base: "5", md: "6" }}>
-              <Flex align="start" justify="space-between">
-                <Text className="module-code" fontFamily="mono" fontSize="sm">
-                  / {module.code}
-                </Text>
-                <Text className="module-status" fontFamily="mono" fontSize="xs">
-                  {module.status}
-                </Text>
-              </Flex>
-              <Heading as="h2" className="module-name" size="md" mt="10">
-                {module.name}
-              </Heading>
-              <Text className="module-description" fontSize="sm" mt="2">
-                {module.description}
-              </Text>
-            </Box>
-          ))}
-        </Grid>
-
-        <Flex className="scope-note" align="center" gap="4" mt="8" p="5">
-          <Text className="scope-index" fontFamily="mono" fontSize="sm">
-            NEXT
-          </Text>
-          <Text className="scope-copy" fontSize="sm">
-            A base está no lugar. O escopo de produto vem da próxima conversa.
-          </Text>
-        </Flex>
       </Box>
 
-      <Flex as="footer" className="footer" justify="space-between" py="5">
-        <Text fontFamily="mono" fontSize="xs">
-          CS HOME LAB / NOVA BASE
-        </Text>
-        <Text fontFamily="mono" fontSize="xs">
-          API {health?.service ?? "—"}
-        </Text>
+      <Flex as="footer" className="footer" justify="space-between" py="5" wrap="wrap" gap="3">
+        <Text fontFamily="mono" fontSize="xs">CS HOME LAB / ADMIN</Text>
+        <Text fontFamily="mono" fontSize="xs">API {health?.service ?? "—"}</Text>
       </Flex>
     </Box>
   );

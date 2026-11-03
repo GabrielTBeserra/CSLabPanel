@@ -1,12 +1,13 @@
 import { timingSafeEqual } from "node:crypto";
 import cors from "@fastify/cors";
-import Fastify from "fastify";
-import type { DatabaseHealthProbe } from "./database.js";
+import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
+import type { CreateMatchInput, MatchStore } from "./database.js";
 
 export interface ServerConfig {
   pluginToken: string;
+  adminToken: string;
   webOrigin: string;
-  database?: DatabaseHealthProbe | null;
+  database?: MatchStore | null;
 }
 
 const unauthorized = {
@@ -29,7 +30,20 @@ const isAuthorized = (authorization: string | undefined, expectedToken: string) 
   return provided.length === expected.length && timingSafeEqual(provided, expected);
 };
 
-export const buildServer = ({ pluginToken, webOrigin, database = null }: ServerConfig) => {
+const matchSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["name", "mapName", "teamAName", "teamBName", "maxRounds"],
+  properties: {
+    name: { type: "string", minLength: 1, maxLength: 80 },
+    mapName: { type: "string", minLength: 1, maxLength: 40 },
+    teamAName: { type: "string", minLength: 1, maxLength: 64 },
+    teamBName: { type: "string", minLength: 1, maxLength: 64 },
+    maxRounds: { type: "integer", minimum: 1, maximum: 30 },
+  },
+} as const;
+
+export const buildServer = ({ pluginToken, adminToken, webOrigin, database = null }: ServerConfig) => {
   const app = Fastify({ bodyLimit: 4096 });
 
   app.register(cors, {
@@ -48,6 +62,18 @@ export const buildServer = ({ pluginToken, webOrigin, database = null }: ServerC
       error: { code: "INTERNAL_ERROR", message: "Internal server error" },
     });
   });
+
+  const requireAdmin = async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!adminToken) {
+      return reply.code(503).send({
+        error: { code: "ADMIN_INTEGRATION_DISABLED", message: "Admin integration unavailable" },
+      });
+    }
+
+    if (!isAuthorized(request.headers.authorization, adminToken)) {
+      return reply.code(401).send(unauthorized);
+    }
+  };
 
   app.get("/api/health", async () => ({
     status: "ok",
@@ -75,6 +101,24 @@ export const buildServer = ({ pluginToken, webOrigin, database = null }: ServerC
       timestamp: new Date().toISOString(),
     };
   });
+
+  app.get("/api/admin/matches", { onRequest: requireAdmin }, async (_, reply) => {
+    if (!database) return reply.code(503).send(databaseUnavailable);
+    return { matches: await database.listMatches() };
+  });
+
+  app.post(
+    "/api/admin/matches",
+    {
+      onRequest: requireAdmin,
+      schema: { body: matchSchema },
+    },
+    async (request, reply) => {
+      if (!database) return reply.code(503).send(databaseUnavailable);
+      const match = await database.createMatch(request.body as CreateMatchInput);
+      return reply.code(201).send({ match });
+    },
+  );
 
   app.post(
     "/api/plugin/heartbeat",

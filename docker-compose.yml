@@ -24,6 +24,7 @@ services:
       PORT: 3000
       WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:5173}
       PLUGIN_TOKEN: ${PLUGIN_TOKEN:-}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
       PGHOST: postgres
       PGPORT: 5432
       PGDATABASE: ${POSTGRES_DB:-cshome}

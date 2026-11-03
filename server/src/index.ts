@@ -4,6 +4,7 @@ import type { PoolConfig } from "pg";
 
 const port = Number(process.env.PORT ?? 3000);
 const pluginToken = process.env.PLUGIN_TOKEN ?? "";
+const adminToken = process.env.ADMIN_TOKEN ?? "";
 const databaseUrl = process.env.DATABASE_URL;
 const postgresConfig: PoolConfig | null = databaseUrl
   ? { connectionString: databaseUrl }
@@ -26,8 +27,13 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) {
   throw new Error("PORT must be an integer between 1 and 65535");
 }
 
-if (isProduction && pluginToken && (pluginToken.length < 32 || pluginToken.trim() !== pluginToken)) {
-  throw new Error("PLUGIN_TOKEN must be a clean secret of at least 32 characters");
+for (const [name, token] of [
+  ["PLUGIN_TOKEN", pluginToken],
+  ["ADMIN_TOKEN", adminToken],
+] as const) {
+  if (isProduction && (!token || token.length < 32 || token.trim() !== token)) {
+    throw new Error(`${name} must be a clean secret of at least 32 characters`);
+  }
 }
 
 if (isProduction && !postgresConfig) {
@@ -44,13 +50,14 @@ if (!["http:", "https:"].includes(origin.protocol) || origin.origin !== webOrigi
 }
 
 const database = postgresConfig ? new PostgresDatabase(postgresConfig) : null;
-const app = buildServer({ pluginToken, webOrigin, database });
+const app = buildServer({ pluginToken, adminToken, webOrigin, database });
 
 if (database) {
   app.addHook("onClose", async () => database.close());
 }
 
 try {
+  if (database) await database.migrate();
   await app.listen({ port, host: "0.0.0.0" });
 } catch (error) {
   app.log.error(error);
