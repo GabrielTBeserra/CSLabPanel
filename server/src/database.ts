@@ -70,6 +70,7 @@ export interface LiveState {
   winner?: "a" | "b" | null;
   maps?: { mapName: string; scoreA: number; scoreB: number; winner: "a" | "b" | null }[];
   players?: LivePlayer[];
+  totals?: LivePlayer[];
   feed?: LiveKill[];
   updatedAt?: string;
 }
@@ -184,6 +185,78 @@ export interface MatchStore {
   createInvite(matchId: string, inviterId: string, inviteeSteamId: string): Promise<void>;
   listInvitesForUser(userId: string): Promise<InviteRecord[]>;
   respondInvite(inviteId: string, userId: string, accept: boolean): Promise<void>;
+  getEloBySteamIds(steamIds: string[]): Promise<Map<string, number>>;
+  recordMatchResult(result: MatchResultInput): Promise<boolean>;
+  getMatchResult(matchId: string): Promise<MatchResultRecord | null>;
+  listMatchHistory(limit: number, steamId?: string): Promise<MatchHistoryEntry[]>;
+  listRankings(limit: number): Promise<RankingEntry[]>;
+  getPlayerProfile(steamId: string): Promise<PlayerProfile | null>;
+}
+
+export interface PlayerMatchStats {
+  steamId: string;
+  name: string;
+  team: "a" | "b";
+  kills: number;
+  deaths: number;
+  assists: number;
+  damage: number;
+  headshotKills: number;
+  won: boolean;
+  eloBefore: number | null;
+  eloAfter: number | null;
+}
+
+export interface MatchResultInput {
+  matchId: string;
+  winner: "a" | "b" | null;
+  scoreA: number;
+  scoreB: number;
+  rounds: number;
+  mapName: string;
+  mvpSteamId: string | null;
+  players: PlayerMatchStats[];
+}
+
+export interface MatchResultRecord extends Omit<MatchResultInput, "players"> {
+  finishedAt: string;
+  players: PlayerMatchStats[];
+}
+
+export interface MatchHistoryEntry {
+  matchId: string;
+  name: string;
+  teamAName: string;
+  teamBName: string;
+  mapName: string;
+  format: MatchFormat;
+  winner: "a" | "b" | null;
+  scoreA: number;
+  scoreB: number;
+  mvpName: string | null;
+  finishedAt: string;
+  player?: { team: "a" | "b"; kills: number; deaths: number; assists: number; won: boolean; eloDelta: number | null };
+}
+
+export interface RankingEntry {
+  steamId: string;
+  displayName: string;
+  avatarUrl: string | null;
+  elo: number;
+  matches: number;
+  wins: number;
+  kills: number;
+  deaths: number;
+  headshotKills: number;
+  damage: number;
+  rounds: number;
+}
+
+export interface PlayerProfile extends RankingEntry {
+  assists: number;
+  mvps: number;
+  maps: { mapName: string; matches: number; wins: number }[];
+  eloHistory: { at: string; elo: number }[];
 }
 
 type Row = QueryResultRow;
@@ -299,6 +372,33 @@ export class PostgresDatabase implements MatchStore {
         created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
         UNIQUE (match_id, invitee_id)
       );
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS elo INTEGER NOT NULL DEFAULT 1000;
+      CREATE TABLE IF NOT EXISTS match_results (
+        match_id UUID PRIMARY KEY REFERENCES matches(id) ON DELETE CASCADE,
+        winner TEXT CHECK (winner IN ('a', 'b')),
+        score_a INTEGER NOT NULL,
+        score_b INTEGER NOT NULL,
+        rounds INTEGER NOT NULL,
+        map_name TEXT NOT NULL,
+        mvp_steam_id TEXT,
+        finished_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+      CREATE TABLE IF NOT EXISTS match_player_stats (
+        match_id UUID NOT NULL REFERENCES match_results(match_id) ON DELETE CASCADE,
+        steam_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        team TEXT NOT NULL CHECK (team IN ('a', 'b')),
+        kills INTEGER NOT NULL,
+        deaths INTEGER NOT NULL,
+        assists INTEGER NOT NULL,
+        damage INTEGER NOT NULL,
+        headshot_kills INTEGER NOT NULL,
+        won BOOLEAN NOT NULL,
+        elo_before INTEGER,
+        elo_after INTEGER,
+        PRIMARY KEY (match_id, steam_id)
+      );
+      CREATE INDEX IF NOT EXISTS match_player_stats_steam_idx ON match_player_stats (steam_id);
       CREATE TABLE IF NOT EXISTS server_players (
         steam_id TEXT PRIMARY KEY CHECK (steam_id ~ '^[0-9]{17}$'),
         display_name TEXT NOT NULL,
@@ -535,6 +635,127 @@ export class PostgresDatabase implements MatchStore {
     );
     const matchId = r.rows[0]?.match_id as string | undefined;
     if (accept && matchId) await this.joinMatch(matchId, userId);
+  }
+
+  async getEloBySteamIds(steamIds: string[]): Promise<Map<string, number>> {
+    const r = await this.pool.query<Row>(`SELECT steam_id, elo FROM users WHERE steam_id = ANY($1::text[])`, [steamIds]);
+    return new Map(r.rows.map((row) => [row.steam_id as string, Number(row.elo)]));
+  }
+
+  async recordMatchResult(result: MatchResultInput): Promise<boolean> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const inserted = await client.query(
+        `INSERT INTO match_results (match_id, winner, score_a, score_b, rounds, map_name, mvp_steam_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (match_id) DO NOTHING RETURNING match_id`,
+        [result.matchId, result.winner, result.scoreA, result.scoreB, result.rounds, result.mapName, result.mvpSteamId],
+      );
+      if (inserted.rowCount === 0) {
+        await client.query("ROLLBACK");
+        return false;
+      }
+      for (const p of result.players) {
+        await client.query(
+          `INSERT INTO match_player_stats (match_id, steam_id, name, team, kills, deaths, assists, damage, headshot_kills, won, elo_before, elo_after)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT DO NOTHING`,
+          [result.matchId, p.steamId, p.name, p.team, p.kills, p.deaths, p.assists, p.damage, p.headshotKills, p.won, p.eloBefore, p.eloAfter],
+        );
+        if (p.eloAfter !== null) await client.query(`UPDATE users SET elo = $2 WHERE steam_id = $1`, [p.steamId, p.eloAfter]);
+      }
+      await client.query("COMMIT");
+      return true;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  private toStats = (row: Row): PlayerMatchStats => ({
+    steamId: row.steam_id, name: row.name, team: row.team, kills: row.kills, deaths: row.deaths, assists: row.assists,
+    damage: row.damage, headshotKills: row.headshot_kills, won: row.won, eloBefore: row.elo_before, eloAfter: row.elo_after,
+  });
+
+  async getMatchResult(matchId: string): Promise<MatchResultRecord | null> {
+    const r = await this.pool.query<Row>(`SELECT * FROM match_results WHERE match_id = $1`, [matchId]);
+    const row = r.rows[0];
+    if (!row) return null;
+    const stats = await this.pool.query<Row>(`SELECT * FROM match_player_stats WHERE match_id = $1 ORDER BY kills DESC`, [matchId]);
+    return {
+      matchId, winner: row.winner, scoreA: row.score_a, scoreB: row.score_b, rounds: row.rounds, mapName: row.map_name,
+      mvpSteamId: row.mvp_steam_id, finishedAt: iso(row.finished_at), players: stats.rows.map(this.toStats),
+    };
+  }
+
+  async listMatchHistory(limit: number, steamId?: string): Promise<MatchHistoryEntry[]> {
+    const r = await this.pool.query<Row>(
+      `SELECT r.*, m.name, m.team_a_name, m.team_b_name, m.format,
+              (SELECT s.name FROM match_player_stats s WHERE s.match_id = r.match_id AND s.steam_id = r.mvp_steam_id) AS mvp_name,
+              ps.team AS p_team, ps.kills AS p_kills, ps.deaths AS p_deaths, ps.assists AS p_assists, ps.won AS p_won,
+              ps.elo_after - ps.elo_before AS p_delta
+       FROM match_results r JOIN matches m ON m.id = r.match_id
+       LEFT JOIN match_player_stats ps ON ps.match_id = r.match_id AND ps.steam_id = $2
+       WHERE $2::text IS NULL OR ps.steam_id IS NOT NULL
+       ORDER BY r.finished_at DESC LIMIT $1`,
+      [limit, steamId ?? null],
+    );
+    return r.rows.map((row) => ({
+      matchId: row.match_id, name: row.name, teamAName: row.team_a_name, teamBName: row.team_b_name, mapName: row.map_name,
+      format: row.format, winner: row.winner, scoreA: row.score_a, scoreB: row.score_b, mvpName: row.mvp_name ?? null,
+      finishedAt: iso(row.finished_at),
+      ...(row.p_team ? { player: { team: row.p_team, kills: row.p_kills, deaths: row.p_deaths, assists: row.p_assists, won: row.p_won, eloDelta: row.p_delta ?? null } } : {}),
+    }));
+  }
+
+  private toRanking = (row: Row): RankingEntry => ({
+    steamId: row.steam_id, displayName: row.display_name, avatarUrl: row.avatar_url ?? null, elo: Number(row.elo),
+    matches: Number(row.matches ?? 0), wins: Number(row.wins ?? 0), kills: Number(row.kills ?? 0), deaths: Number(row.deaths ?? 0),
+    headshotKills: Number(row.headshot_kills ?? 0), damage: Number(row.damage ?? 0), rounds: Number(row.rounds ?? 0),
+  });
+
+  private static readonly RANKING_SELECT = `
+    SELECT u.steam_id, u.display_name, u.avatar_url, u.elo,
+           count(s.match_id) AS matches, count(*) FILTER (WHERE s.won) AS wins,
+           coalesce(sum(s.kills), 0) AS kills, coalesce(sum(s.deaths), 0) AS deaths, coalesce(sum(s.assists), 0) AS assists,
+           coalesce(sum(s.headshot_kills), 0) AS headshot_kills, coalesce(sum(s.damage), 0) AS damage,
+           coalesce(sum(r.rounds), 0) AS rounds,
+           count(*) FILTER (WHERE r.mvp_steam_id = u.steam_id) AS mvps
+    FROM users u
+    LEFT JOIN match_player_stats s ON s.steam_id = u.steam_id
+    LEFT JOIN match_results r ON r.match_id = s.match_id`;
+
+  async listRankings(limit: number): Promise<RankingEntry[]> {
+    const r = await this.pool.query<Row>(
+      `${PostgresDatabase.RANKING_SELECT} GROUP BY u.id HAVING count(s.match_id) > 0 ORDER BY u.elo DESC, wins DESC LIMIT $1`,
+      [limit],
+    );
+    return r.rows.map(this.toRanking);
+  }
+
+  async getPlayerProfile(steamId: string): Promise<PlayerProfile | null> {
+    const r = await this.pool.query<Row>(`${PostgresDatabase.RANKING_SELECT} WHERE u.steam_id = $1 GROUP BY u.id`, [steamId]);
+    const row = r.rows[0];
+    if (!row) return null;
+    const [maps, history] = await Promise.all([
+      this.pool.query<Row>(
+        `SELECT r.map_name, count(*) AS matches, count(*) FILTER (WHERE s.won) AS wins
+         FROM match_player_stats s JOIN match_results r ON r.match_id = s.match_id
+         WHERE s.steam_id = $1 GROUP BY r.map_name ORDER BY matches DESC`,
+        [steamId],
+      ),
+      this.pool.query<Row>(
+        `SELECT r.finished_at, s.elo_after FROM match_player_stats s JOIN match_results r ON r.match_id = s.match_id
+         WHERE s.steam_id = $1 AND s.elo_after IS NOT NULL ORDER BY r.finished_at DESC LIMIT 30`,
+        [steamId],
+      ),
+    ]);
+    return {
+      ...this.toRanking(row), assists: Number(row.assists ?? 0), mvps: Number(row.mvps ?? 0),
+      maps: maps.rows.map((m) => ({ mapName: m.map_name, matches: Number(m.matches), wins: Number(m.wins) })),
+      eloHistory: history.rows.reverse().map((h) => ({ at: iso(h.finished_at), elo: Number(h.elo_after) })),
+    };
   }
 
   async close(): Promise<void> { await this.pool.end(); }

@@ -91,6 +91,21 @@ const playersFrom = (teamStats: Json, team: "a" | "b"): LivePlayer[] =>
 
 const MAX_FEED = 12;
 
+export const addTotals = (totals: LivePlayer[], players: LivePlayer[]): LivePlayer[] => {
+  const merged = new Map(totals.map((p) => [p.steamId, { ...p }]));
+  for (const p of players) {
+    const current = merged.get(p.steamId);
+    if (!current) merged.set(p.steamId, { ...p });
+    else {
+      Object.assign(current, {
+        name: p.name, team: p.team, kills: current.kills + p.kills, deaths: current.deaths + p.deaths,
+        assists: current.assists + p.assists, damage: current.damage + p.damage, headshotKills: current.headshotKills + p.headshotKills,
+      });
+    }
+  }
+  return [...merged.values()];
+};
+
 export const applyMatchzyEvent = (
   live: LiveState,
   state: ServerState,
@@ -106,7 +121,7 @@ export const applyMatchzyEvent = (
   switch (event.event) {
     case "series_start":
       nextState = "warmup";
-      Object.assign(next, { round: 0, scoreA: 0, scoreB: 0, seriesA: 0, seriesB: 0, maps: [], feed: [], players: [], winner: null });
+      Object.assign(next, { round: 0, scoreA: 0, scoreB: 0, seriesA: 0, seriesB: 0, maps: [], feed: [], players: [], totals: [], winner: null });
       break;
     case "going_live":
       nextState = "live";
@@ -130,6 +145,7 @@ export const applyMatchzyEvent = (
         if (nextState !== "paused") nextState = "live";
       } else {
         const winner = teamOf(obj(event.winner).team);
+        next.totals = addTotals(live.totals ?? [], live.players ?? []);
         next.maps = [...(live.maps ?? []), { mapName: next.mapName ?? "", scoreA: next.scoreA, scoreB: next.scoreB, winner }];
         nextState = "map_end";
       }

@@ -11,6 +11,7 @@ import {
 } from "./database.js";
 import { applyMatchzyEvent, buildMatchzyConfig, parseStatusJson, seriesMaps, type ConnectedPlayer } from "./live.js";
 import { quoteArg, sendRconCommand, type RconConfig } from "./rcon.js";
+import { eloChanges, levelFor, pickMvp } from "./stats.js";
 import { RealtimeBus, type RealtimeEvent } from "./realtime.js";
 
 export interface ServerConfig {
@@ -380,6 +381,29 @@ export const buildServer = ({
     return { site, server };
   });
 
+  app.get("/api/history", { onRequest: requireUser }, async (request, reply) => {
+    if (!database) return reply.code(503).send(databaseUnavailable);
+    const { steamId } = request.query as { steamId?: string };
+    if (steamId !== undefined && !/^[0-9]{17}$/.test(steamId)) return reply.code(400).send(invalidRequest);
+    return { matches: await database.listMatchHistory(50, steamId) };
+  });
+
+  app.get("/api/rankings", { onRequest: requireUser }, async (_, reply) => {
+    if (!database) return reply.code(503).send(databaseUnavailable);
+    const rankings = await database.listRankings(100);
+    return { rankings: rankings.map((r, i) => ({ ...r, position: i + 1, level: levelFor(r.elo) })) };
+  });
+
+  app.get("/api/players/:steamId", { onRequest: requireUser }, async (request, reply) => {
+    if (!database) return reply.code(503).send(databaseUnavailable);
+    const { steamId } = request.params as { steamId: string };
+    if (!/^[0-9]{17}$/.test(steamId)) return reply.code(400).send(invalidRequest);
+    const profile = await database.getPlayerProfile(steamId);
+    if (!profile) return reply.code(404).send({ error: { code: "NOT_FOUND", message: "Player not found" } });
+    const recent = await database.listMatchHistory(20, steamId);
+    return { profile: { ...profile, level: levelFor(profile.elo) }, recent };
+  });
+
   app.get("/api/matches", { onRequest: requireUser }, async (_, reply) => {
     if (!database) return reply.code(503).send(databaseUnavailable);
     const matches = await database.listMatches();
@@ -412,8 +436,8 @@ export const buildServer = ({
     const { id } = request.params as { id: string };
     const match = await database.getMatchById(id);
     if (!match) return reply.code(404).send({ error: { code: "NOT_FOUND", message: "Match not found" } });
-    const [players, vetoes] = await Promise.all([database.listMatchPlayers(id), database.listVetoes(id)]);
-    return { match: { ...match, players, vetoes }, connectAddress: connectAddress || null };
+    const [players, vetoes, result] = await Promise.all([database.listMatchPlayers(id), database.listVetoes(id), database.getMatchResult(id)]);
+    return { match: { ...match, players, vetoes }, result, connectAddress: connectAddress || null };
   });
 
   app.post(
@@ -727,9 +751,34 @@ export const buildServer = ({
     if (currentMap) result.live.mapName = currentMap;
     await database.setLive(match.id, result.live);
     if (result.state !== match.serverState) await database.setServerState(match.id, result.state);
-    if (result.seriesFinished) await database.setMatchPhase(match.id, "finished");
+    if (result.seriesFinished) {
+      await database.setMatchPhase(match.id, "finished");
+      await finalizeMatch(match, result.live, maps).catch((error) => app.log.warn(error, "Failed to record match result"));
+    }
     publishMatch(match.id);
     return true;
+  };
+
+  const finalizeMatch = async (match: MatchRecord, live: MatchRecord["live"], maps: string[]) => {
+    if (!database) return;
+    const players = (live.totals && live.totals.length > 0 ? live.totals : live.players ?? [])
+      .filter((p) => /^[0-9]{17}$/.test(p.steamId));
+    const rounds = (live.maps ?? []).reduce((sum, m) => sum + m.scoreA + m.scoreB, 0) || (live.scoreA ?? 0) + (live.scoreB ?? 0);
+    const winner = live.winner ?? null;
+    const elo = await database.getEloBySteamIds(players.map((p) => p.steamId));
+    const changes = eloChanges(players.filter((p) => elo.has(p.steamId)).map((p) => ({ steamId: p.steamId, team: p.team, elo: elo.get(p.steamId)! })), winner);
+    const recorded = await database.recordMatchResult({
+      matchId: match.id, winner,
+      scoreA: match.format === "bo3" ? live.seriesA ?? 0 : live.scoreA ?? 0,
+      scoreB: match.format === "bo3" ? live.seriesB ?? 0 : live.scoreB ?? 0,
+      rounds, mapName: maps.join(", ") || match.mapName, mvpSteamId: pickMvp(players, rounds),
+      players: players.map((p) => {
+        const before = elo.get(p.steamId) ?? null;
+        const delta = changes.get(p.steamId);
+        return { ...p, won: p.team === winner, eloBefore: before, eloAfter: before !== null && delta !== undefined ? before + delta : null };
+      }),
+    });
+    if (recorded) publish({ type: "matches" });
   };
 
   app.register(async (instance) => {

@@ -79,6 +79,12 @@ const createDatabase = (created: CreateMatchInput[] = []): MatchStore => ({
   createInvite: async () => undefined,
   listInvitesForUser: async () => [],
   respondInvite: async () => undefined,
+  getEloBySteamIds: async () => new Map(),
+  recordMatchResult: async () => true,
+  getMatchResult: async () => null,
+  listMatchHistory: async () => [],
+  listRankings: async () => [],
+  getPlayerProfile: async () => null,
 });
 
 const config = {
@@ -249,6 +255,34 @@ describe("Match server integration", () => {
     await received;
     assert.deepEqual(messages.find((m) => m.type === "match"), { type: "match", matchId: match.id });
     socket.terminate();
+    await app.close();
+  });
+
+  it("records results, MVP and ELO when MatchZy reports the series end", async () => {
+    const database = createDatabase();
+    const results: { winner: string | null; mvpSteamId: string | null; players: { steamId: string; eloAfter: number | null }[] }[] = [];
+    database.getMatchByNumber = async () => ({
+      ...match, serverState: "live",
+      live: {
+        scoreA: 13, scoreB: 7,
+        players: [
+          { steamId: "76561198000000001", name: "A", team: "a", kills: 20, deaths: 10, assists: 3, damage: 2000, headshotKills: 8 },
+          { steamId: "76561198000000002", name: "B", team: "b", kills: 10, deaths: 20, assists: 1, damage: 1000, headshotKills: 2 },
+        ],
+      },
+    });
+    database.getEloBySteamIds = async () => new Map([["76561198000000001", 1000], ["76561198000000002", 1000]]);
+    database.recordMatchResult = async (result) => { results.push(result); return true; };
+    const app = buildServer({ ...config, database });
+    const response = await app.inject({
+      method: "POST", url: "/api/plugin/events", headers: { authorization: "Bearer test-plugin-token" },
+      payload: { event: "series_end", matchid: 7, team1_series_score: 1, team2_series_score: 0, winner: { team: "team1" } },
+    });
+    assert.equal(response.statusCode, 202);
+    assert.equal(results.length, 1);
+    assert.equal(results[0]!.winner, "a");
+    assert.equal(results[0]!.mvpSteamId, "76561198000000001");
+    assert.deepEqual(results[0]!.players.map((p) => p.eloAfter), [1016, 984]);
     await app.close();
   });
 
