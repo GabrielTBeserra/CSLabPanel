@@ -159,6 +159,7 @@ export interface MatchPlayerRecord {
   avatarUrl: string | null;
   team: "a" | "b" | null;
   joinedAt: string;
+  elo: number;
 }
 
 export interface InviteRecord {
@@ -639,13 +640,13 @@ export class PostgresDatabase implements MatchStore {
 
   async listMatchPlayers(matchId: string): Promise<MatchPlayerRecord[]> {
     const r = await this.pool.query<Row>(
-      `SELECT u.id AS user_id, u.steam_id, u.display_name, u.avatar_url, mp.team, mp.joined_at
+      `SELECT u.id AS user_id, u.steam_id, u.display_name, u.avatar_url, u.elo, mp.team, mp.joined_at
        FROM match_players mp JOIN users u ON u.id = mp.user_id WHERE mp.match_id = $1 ORDER BY mp.joined_at`,
       [matchId],
     );
     return r.rows.map((row) => ({
       userId: row.user_id, steamId: row.steam_id, displayName: row.display_name,
-      avatarUrl: row.avatar_url ?? null, team: row.team, joinedAt: iso(row.joined_at),
+      avatarUrl: row.avatar_url ?? null, team: row.team, joinedAt: iso(row.joined_at), elo: Number(row.elo ?? 0),
     }));
   }
 

@@ -33,7 +33,11 @@ export interface MatchPlayer {
   avatarUrl: string | null;
   team: "a" | "b" | null;
   joinedAt: string;
+  elo: number;
 }
+
+const LEVEL_FLOORS = [0, 501, 751, 901, 1051, 1201, 1351, 1531, 1751, 2001];
+export const levelFor = (elo: number) => LEVEL_FLOORS.reduce((lvl, floor, i) => (elo >= floor ? i + 1 : lvl), 1);
 
 export type MatchFormat = "bo1" | "bo3";
 export type MatchPhase = "lobby" | "veto" | "live" | "finished";
@@ -420,7 +424,7 @@ export const setTeam = (matchId: string, team: "a" | "b") =>
   request<{ joined: boolean; team: string }>(`/matches/${matchId}/team`, { method: "POST", body: JSON.stringify({ team }) });
 
 export const shuffleTeams = (matchId: string) =>
-  request<{ shuffled: boolean }>(`/matches/${matchId}/shuffle`, { method: "POST" });
+  request<{ shuffled: boolean; eloA?: number; eloB?: number }>(`/matches/${matchId}/shuffle`, { method: "POST" });
 
 export const listUsers = (signal?: AbortSignal) =>
   request<{ users: UserRecord[] }>("/staff/users", { signal });

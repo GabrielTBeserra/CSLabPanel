@@ -16,6 +16,7 @@ import {
   sendVeto,
   setTeam,
   shuffleTeams,
+  levelFor,
   startVeto,
   type MatchPlayer,
   type MatchRecord,
@@ -23,6 +24,7 @@ import {
   type UserRecord,
 } from "./services/api";
 import { VetoBoard } from "./App";
+import { LevelBadge } from "./StatsPages";
 
 const STEAM_ID64 = /^\d{17}$/;
 
@@ -59,7 +61,10 @@ function TeamPanel({
           <Text className="team-side" fontFamily="mono" fontSize="xs">{side === "a" ? "TIME A" : "TIME B"}</Text>
           <Heading as="h3" size="md">{title}</Heading>
         </Box>
-        <Badge className="state-badge">{players.length}/5</Badge>
+        <HStack gap="2">
+          {players.length > 0 ? <Badge className="state-badge">ELO {Math.round(players.reduce((s, p) => s + p.elo, 0) / players.length)}</Badge> : null}
+          <Badge className="state-badge">{players.length}/5</Badge>
+        </HStack>
       </Flex>
       <Stack gap="2">
         {players.map((p, i) => (
@@ -78,6 +83,7 @@ function TeamPanel({
               <Box className="avatar-fallback">{p.displayName.slice(0, 1).toUpperCase()}</Box>
             )}
             <Text flex="1" fontSize="sm" fontWeight="bold" truncate>{p.displayName}</Text>
+            <LevelBadge elo={p.elo} level={levelFor(p.elo)} />
             {p.userId === captainId ? <Badge className="captain-badge">CAPITÃO</Badge> : null}
           </Flex>
         ))}
@@ -310,7 +316,7 @@ export default function MatchRoom({ matchId, user, onBack }: { matchId: string; 
               <HStack gap="2" ml="auto" wrap="wrap">
                 <Button
                   className="ghost-button"
-                  onClick={() => void act(() => shuffleTeams(match.id), "Times sorteados.", "start")}
+                  onClick={() => void act(() => shuffleTeams(match.id), "Times balanceados por ELO.", "start")}
                   size="sm"
                 >SORTEAR TIMES</Button>
                 <input

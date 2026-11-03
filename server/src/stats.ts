@@ -50,3 +50,55 @@ export const pickWorst = (players: LivePlayer[], rounds: number): string | null 
   if (players.length < 2) return null;
   return [...players].sort((x, y) => rating(x, rounds) - rating(y, rounds))[0]!.steamId;
 };
+
+const bitCount = (mask: number) => {
+  let count = 0;
+  let x = mask;
+  while (x) { count += x & 1; x >>= 1; }
+  return count;
+};
+
+// Partitions players into "a"/"b" minimizing the ELO gap between teams.
+// Exact search for lobbies up to 16 players (random pick among optimal splits,
+// random side), greedy snake draft for larger groups.
+export const balanceTeams = <T>(players: T[], eloOf: (p: T) => number): Map<T, "a" | "b"> => {
+  const result = new Map<T, "a" | "b">();
+  const n = players.length;
+  if (n === 0) return result;
+  if (n < 3) {
+    players.forEach((p, i) => result.set(p, i % 2 === 0 ? "a" : "b"));
+    return result;
+  }
+  const half = Math.floor(n / 2);
+  const total = players.reduce((sum, p) => sum + eloOf(p), 0);
+
+  let teamA: T[];
+  if (n <= 16) {
+    let bestDiff = Infinity;
+    let best: number[] = [];
+    for (let mask = 1; mask < 1 << n; mask += 1) {
+      if (bitCount(mask) !== half) continue;
+      let sum = 0;
+      for (let i = 0; i < n; i += 1) if (mask & (1 << i)) sum += eloOf(players[i]!);
+      const diff = Math.abs(total - 2 * sum);
+      if (diff < bestDiff) { bestDiff = diff; best = [mask]; }
+      else if (diff === bestDiff) best.push(mask);
+    }
+    const chosen = best[Math.floor(Math.random() * best.length)]!;
+    const aIsMask = Math.random() < 0.5;
+    teamA = players.filter((_, i) => (chosen & (1 << i)) !== 0 === aIsMask);
+  } else {
+    const cap = Math.ceil(n / 2);
+    const a: T[] = []; const b: T[] = [];
+    let sumA = 0; let sumB = 0;
+    for (const p of [...players].sort((x, y) => eloOf(y) - eloOf(x))) {
+      if ((a.length < cap && sumA <= sumB) || b.length >= cap) { a.push(p); sumA += eloOf(p); }
+      else { b.push(p); sumB += eloOf(p); }
+    }
+    teamA = a;
+  }
+
+  const inA = new Set(teamA);
+  for (const p of players) result.set(p, inA.has(p) ? "a" : "b");
+  return result;
+};

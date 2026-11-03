@@ -11,7 +11,7 @@ import {
 } from "./database.js";
 import { applyMatchzyEvent, buildMatchzyConfig, parseStatusJson, seriesMaps, type ConnectedPlayer } from "./live.js";
 import { quoteArg, sendRconCommand, type RconConfig } from "./rcon.js";
-import { eloChanges, levelFor, pickMvp, pickWorst } from "./stats.js";
+import { STARTING_ELO, balanceTeams, eloChanges, levelFor, pickMvp, pickWorst } from "./stats.js";
 import { RealtimeBus, type RealtimeEvent } from "./realtime.js";
 
 export interface ServerConfig {
@@ -468,13 +468,12 @@ export const buildServer = ({
     if (!canManageMatch(match, request.currentUser!)) return reply.code(403).send(forbidden);
     if (match.phase !== "lobby") return reply.code(409).send({ error: { code: "INVALID_PHASE", message: "Teams are locked" } });
     const players = await database.listMatchPlayers(id);
-    for (let i = players.length - 1; i > 0; i -= 1) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [players[i], players[j]] = [players[j]!, players[i]!];
-    }
-    await Promise.all(players.map((p, i) => database.setPlayerTeam(id, p.userId, i % 2 === 0 ? "a" : "b")));
+    const teams = balanceTeams(players, (p) => p.elo || STARTING_ELO);
+    await Promise.all(players.map((p) => database.setPlayerTeam(id, p.userId, teams.get(p)!)));
     publishMatch(id);
-    return { shuffled: true, matchId: id };
+    const sumOf = (team: "a" | "b") =>
+      Math.round(players.filter((p) => teams.get(p) === team).reduce((s, p) => s + (p.elo || STARTING_ELO), 0));
+    return { shuffled: true, matchId: id, eloA: sumOf("a"), eloB: sumOf("b") };
   });
 
   app.post("/api/matches/:id/veto/start", { onRequest: requireUser }, async (request, reply) => {
