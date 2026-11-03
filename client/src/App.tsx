@@ -11,6 +11,7 @@ import {
   Stack,
   Text,
 } from "@chakra-ui/react";
+import MatchRoom from "./MatchRoom";
 import {
   createMatch,
   getApiHealth,
@@ -88,7 +89,7 @@ function PresenceList({ title, entries, empty }: { title: string; entries: Prese
   );
 }
 
-function VetoBoard({ match, user, onAction }: { match: MatchRecord; user: UserRecord; onAction: (action: { action: "ban" | "pick"; mapName: string } | { action: "side"; side: "a" | "b" }) => void }) {
+export function VetoBoard({ match, user, onAction }: { match: MatchRecord; user: UserRecord; onAction: (action: { action: "ban" | "pick"; mapName: string } | { action: "side"; side: "a" | "b" }) => void }) {
   const vetoes = match.vetoes ?? [];
   const pool = match.mapPool.length >= 3 ? match.mapPool : MAPS;
   const used = new Set(vetoes.filter((v) => v.mapName).map((v) => v.mapName));
@@ -155,6 +156,18 @@ function VetoBoard({ match, user, onAction }: { match: MatchRecord; user: UserRe
 }
 
 export default function App() {
+  const [path, setPath] = useState(window.location.pathname);
+  const navigate = (to: string) => {
+    window.history.pushState({}, "", to);
+    setPath(to);
+  };
+  useEffect(() => {
+    const onPop = () => setPath(window.location.pathname);
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+  const roomMatch = /^\/match\/([0-9a-f-]{36})$/.exec(path)?.[1] ?? null;
+
   const [connection, setConnection] = useState<ConnectionState>("checking");
   const [user, setUser] = useState<UserRecord | null>(null);
   const [userLoaded, setUserLoaded] = useState(false);
@@ -220,7 +233,7 @@ export default function App() {
     setIsBusy(true);
     setFeedback("");
     try {
-      await createMatch({
+      const created = await createMatch({
         name: form.name.trim(),
         mapName: form.mapPool[0] ?? "de_mirage",
         teamAName: form.teamAName.trim(),
@@ -232,6 +245,7 @@ export default function App() {
       setForm(initialForm);
       setFeedback("Partida criada com sucesso.");
       await refresh();
+      if (created.match) navigate(`/match/${created.match.id}`);
     } catch {
       setFeedback("Não foi possível criar a partida (pool precisa de 3+ mapas).");
     } finally {
@@ -291,6 +305,9 @@ export default function App() {
             </Button>
           </Box>
         ) : (
+          roomMatch ? (
+            <MatchRoom matchId={roomMatch} onBack={() => navigate("/")} user={user} />
+          ) : (
           <Grid className="admin-layout" gap="5" templateColumns={{ base: "1fr", xl: "280px minmax(0, 1fr)" }}>
             <Stack className="admin-sidebar" gap="4">
               <PresenceList title="ONLINE NO SITE" entries={siteOnline} empty="Ninguém online no site." />
@@ -418,6 +435,7 @@ export default function App() {
                               </Box>
                               <HStack gap="2">
                                 <Badge className={`match-status is-${match.phase}`}>{phaseLabel[match.phase]}</Badge>
+                                <Button className="ghost-button" onClick={() => navigate(`/match/${match.id}`)} size="xs">SALA</Button>
                                 {match.phase === "lobby" && !isMember ? (
                                   <Button className="primary-button" onClick={() => void handleAction(() => joinMatch(match.id), "Você entrou na partida.")} size="xs">ENTRAR</Button>
                                 ) : null}
@@ -452,6 +470,7 @@ export default function App() {
               </Grid>
             </Stack>
           </Grid>
+          ))
         )}
       </Box>
 

@@ -144,6 +144,12 @@ export const startVeto = (matchId: string, captainBSteamId?: string) =>
 export const sendVeto = (matchId: string, payload: { action: "ban" | "pick"; mapName: string } | { action: "side"; side: "a" | "b" }) =>
   request<{ accepted?: boolean; finished?: boolean }>(`/matches/${matchId}/veto`, { method: "POST", body: JSON.stringify(payload) });
 
+export const getMatch = (matchId: string, signal?: AbortSignal) =>
+  request<{ match: MatchRecord }>(`/matches/${matchId}`, { signal });
+
+export const setTeam = (matchId: string, team: "a" | "b") =>
+  request<{ joined: boolean; team: string }>(`/matches/${matchId}/team`, { method: "POST", body: JSON.stringify({ team }) });
+
 export const listInvites = (signal?: AbortSignal) =>
   request<{ invites: InviteRecord[] }>("/invites", { signal });
 

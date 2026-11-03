@@ -253,6 +253,31 @@ export const buildServer = ({ pluginToken, adminToken, webOrigin, database = nul
     return { joined: true, matchId: id };
   });
 
+  app.get("/api/matches/:id", { onRequest: requireUser }, async (request, reply) => {
+    if (!database) return reply.code(503).send(databaseUnavailable);
+    const { id } = request.params as { id: string };
+    const match = await database.getMatchById(id);
+    if (!match) return reply.code(404).send({ error: { code: "NOT_FOUND", message: "Match not found" } });
+    const [players, vetoes] = await Promise.all([database.listMatchPlayers(id), database.listVetoes(id)]);
+    return { match: { ...match, players, vetoes } };
+  });
+
+  app.post(
+    "/api/matches/:id/team",
+    {
+      onRequest: requireUser,
+      schema: { body: { type: "object", additionalProperties: false, required: ["team"], properties: { team: { type: "string", enum: ["a", "b"] } } } },
+    },
+    async (request, reply) => {
+      if (!database) return reply.code(503).send(databaseUnavailable);
+      const { id } = request.params as { id: string };
+      const { team } = request.body as { team: "a" | "b" };
+      await database.joinMatch(id, request.currentUser!.id);
+      await database.setPlayerTeam(id, request.currentUser!.id, team);
+      return { joined: true, matchId: id, team };
+    },
+  );
+
   app.post("/api/matches/:id/veto/start", { onRequest: requireUser }, async (request, reply) => {
     if (!database) return reply.code(503).send(databaseUnavailable);
     const { id } = request.params as { id: string };

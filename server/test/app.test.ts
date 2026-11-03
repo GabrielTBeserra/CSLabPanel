@@ -56,6 +56,7 @@ const createDatabase = (created: CreateMatchInput[] = []): MatchStore => ({
   reportServerPlayers: async () => undefined,
   listServerPlayers: async () => [],
   joinMatch: async () => undefined,
+  setPlayerTeam: async () => undefined,
   listMatchPlayers: async () => [],
   createInvite: async () => undefined,
   listInvitesForUser: async () => [],

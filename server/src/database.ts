@@ -111,6 +111,7 @@ export interface MatchStore {
   reportServerPlayers(players: HeartbeatPlayer[]): Promise<void>;
   listServerPlayers(withinSeconds: number): Promise<PresenceEntry[]>;
   joinMatch(matchId: string, userId: string): Promise<void>;
+  setPlayerTeam(matchId: string, userId: string, team: "a" | "b"): Promise<void>;
   listMatchPlayers(matchId: string): Promise<MatchPlayerRecord[]>;
   createInvite(matchId: string, inviterId: string, inviteeSteamId: string): Promise<void>;
   listInvitesForUser(userId: string): Promise<InviteRecord[]>;
@@ -349,6 +350,13 @@ export class PostgresDatabase implements MatchStore {
     await this.pool.query(
       `INSERT INTO match_players (match_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
       [matchId, userId],
+    );
+  }
+
+  async setPlayerTeam(matchId: string, userId: string, team: "a" | "b"): Promise<void> {
+    await this.pool.query(
+      `UPDATE match_players SET team = $3 WHERE match_id = $1 AND user_id = $2`,
+      [matchId, userId, team],
     );
   }
 
