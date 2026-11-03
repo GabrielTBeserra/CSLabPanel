@@ -470,8 +470,7 @@ export default function App() {
               </Grid>
             </Stack>
           </Grid>
-          ))
-        )}
+        ))}
       </Box>
 
       <Flex as="footer" className="footer" justify="space-between" py="5" wrap="wrap" gap="3">
