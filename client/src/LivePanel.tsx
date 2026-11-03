@@ -133,7 +133,7 @@ export default function LivePanel({
           <HStack gap="2">
             <Button className="ghost-button" onClick={() => onCopy(`connect ${connectAddress}`)} size="sm">COPIAR</Button>
             <Button asChild className="primary-button" size="sm">
-              <a href={`steam://connect/${connectAddress}`}>ENTRAR NO JOGO</a>
+              <a href={`steam://rungameid/730//+connect%20${connectAddress}`}>ENTRAR NO JOGO</a>
             </Button>
           </HStack>
         </Flex>
