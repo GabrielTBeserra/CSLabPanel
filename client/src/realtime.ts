@@ -33,14 +33,20 @@ const ensureConnection = () => {
   if (close) return;
   const startedAt = Date.now();
   lastMessageAt = 0;
-  close = subscribeRealtime((event) => {
-    const wasLive = mode === "live";
-    lastMessageAt = Date.now();
-    setMode("live");
-    if (!wasLive) emit({ type: "matches" });
-    if (event.type !== "hello" && event.type !== "ping") emit(event);
-  });
+  close = subscribeRealtime(
+    (event) => {
+      const wasLive = mode === "live";
+      lastMessageAt = Date.now();
+      setMode("live");
+      if (!wasLive) emit({ type: "matches" });
+      if (event.type !== "hello" && event.type !== "ping") emit(event);
+    },
+    (connected) => {
+      if (!connected && mode === "live") setMode("connecting");
+    },
+  );
   watchdog = setInterval(() => {
+    if (mode === "polling") return;
     const silentFor = Date.now() - (lastMessageAt || startedAt);
     if (silentFor > (lastMessageAt ? STALE_STREAM_MS : STREAM_TIMEOUT_MS)) setMode("polling");
   }, 2000);

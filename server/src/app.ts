@@ -1,5 +1,6 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import cors from "@fastify/cors";
+import websocket from "@fastify/websocket";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import {
   hashSessionToken,
@@ -235,6 +236,15 @@ export const buildServer = ({
     methods: ["GET", "POST", "DELETE"],
     allowedHeaders: ["Content-Type", "Authorization"],
   });
+  app.register(websocket, { options: { maxPayload: 1024 } });
+
+  const requireSameOrigin = async (request: FastifyRequest, reply: FastifyReply) => {
+    const origin = request.headers.origin;
+    if (!origin) return;
+    let originHost = "";
+    try { originHost = new URL(origin).host.toLowerCase(); } catch { originHost = ""; }
+    if (originHost !== new URL(requestOrigin(request)).host) return reply.code(403).send(forbidden);
+  };
 
   app.setErrorHandler((error, request, reply) => {
     if (error instanceof Error && "validation" in error) {
@@ -718,20 +728,24 @@ export const buildServer = ({
     return true;
   };
 
-  app.get("/api/stream", { onRequest: requireUser }, (request, reply) => {
-    reply.hijack();
-    const raw = reply.raw;
-    raw.writeHead(200, {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache, no-transform",
-      Connection: "keep-alive",
-      "X-Accel-Buffering": "no",
+  app.register(async (instance) => {
+    instance.get("/api/ws", { websocket: true, onRequest: [requireSameOrigin, requireUser] }, (socket) => {
+      const send = (event: RealtimeEvent | { type: "hello" | "ping" }) => {
+        if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(event));
+      };
+      send({ type: "hello" });
+      const unsubscribe = bus.subscribe(send);
+      let alive = true;
+      socket.on("pong", () => { alive = true; });
+      const heartbeat = setInterval(() => {
+        if (!alive) return socket.terminate();
+        alive = false;
+        socket.ping();
+        send({ type: "ping" });
+      }, 15000);
+      socket.on("close", () => { clearInterval(heartbeat); unsubscribe(); });
+      socket.on("error", () => socket.terminate());
     });
-    raw.write(`:${" ".repeat(2048)}\nretry: 3000\n\n`);
-    raw.write(`data: ${JSON.stringify({ type: "hello" })}\n\n`);
-    const unsubscribe = bus.subscribe((event) => raw.write(`data: ${JSON.stringify(event)}\n\n`));
-    const ping = setInterval(() => raw.write(`data: ${JSON.stringify({ type: "ping" })}\n\n`), 15000);
-    request.raw.on("close", () => { clearInterval(ping); unsubscribe(); });
   });
 
   app.post(

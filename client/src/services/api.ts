@@ -255,13 +255,35 @@ export const startDynamicMatch = (input: DynamicStartInput) =>
   request<{ matchId: string; loading: boolean; error: string | null }>("/dynamic/start", { method: "POST", body: JSON.stringify(input) });
 
 export const subscribeRealtime = (onEvent: (event: RealtimeEvent) => void, onStatus?: (connected: boolean) => void) => {
-  const source = new EventSource(`${apiBaseUrl}/stream`, { withCredentials: true });
-  source.onerror = () => onStatus?.(false);
-  source.onmessage = (message) => {
-    onStatus?.(true);
-    try { onEvent(JSON.parse(message.data) as RealtimeEvent); } catch { return; }
+  const base = new URL(`${apiBaseUrl}/ws`, window.location.href);
+  base.protocol = base.protocol === "https:" ? "wss:" : "ws:";
+  let socket: WebSocket | null = null;
+  let retry: ReturnType<typeof setTimeout> | undefined;
+  let attempts = 0;
+  let closed = false;
+
+  const connect = () => {
+    socket = new WebSocket(base);
+    socket.onmessage = (message) => {
+      attempts = 0;
+      onStatus?.(true);
+      try { onEvent(JSON.parse(String(message.data)) as RealtimeEvent); } catch { return; }
+    };
+    socket.onclose = () => {
+      onStatus?.(false);
+      if (closed) return;
+      attempts += 1;
+      retry = setTimeout(connect, Math.min(1000 * 2 ** Math.min(attempts, 4), 15000));
+    };
+    socket.onerror = () => socket?.close();
   };
-  return () => source.close();
+  connect();
+
+  return () => {
+    closed = true;
+    clearTimeout(retry);
+    socket?.close();
+  };
 };
 
 export const setTeam = (matchId: string, team: "a" | "b") =>

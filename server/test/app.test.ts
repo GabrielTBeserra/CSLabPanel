@@ -230,6 +230,28 @@ describe("Match server integration", () => {
   };
   const cookie = { cookie: "cshome_session=token" };
 
+  it("streams realtime events over an authenticated WebSocket", async () => {
+    const database = createDatabase();
+    database.findSessionUser = async () => ({ user: sessionUser, sessionId: "s1" });
+    const app = buildServer({ ...config, database });
+    await app.ready();
+    await assert.rejects(app.injectWS("/api/ws"));
+    const socket = await app.injectWS("/api/ws", { headers: cookie });
+    const messages: { type: string; matchId?: string }[] = [];
+    const received = new Promise<void>((resolve) => {
+      socket.on("message", (data) => {
+        messages.push(JSON.parse(String(data)));
+        if (messages.some((m) => m.type === "match")) resolve();
+      });
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await app.inject({ method: "POST", url: "/api/plugin/events", headers: { authorization: "Bearer test-plugin-token" }, payload: { event: "going_live", matchid: 7 } });
+    await received;
+    assert.deepEqual(messages.find((m) => m.type === "match"), { type: "match", matchId: match.id });
+    socket.terminate();
+    await app.close();
+  });
+
   it("rejects MatchZy events without the plugin token", async () => {
     const app = buildServer({ ...config, database: createDatabase() });
     const response = await app.inject({ method: "POST", url: "/api/plugin/events", payload: { event: "going_live", matchid: 7 } });
