@@ -36,6 +36,7 @@ export const buildMatchzyConfig = (
     min_players_to_ready: Math.max(Math.min(sizeA, sizeB), 1),
     team1: { id: "a", name: match.teamAName, players: roster("a") },
     team2: { id: "b", name: match.teamBName, players: roster("b") },
+    player_elo: Object.fromEntries(players.filter((p) => /^[0-9]{17}$/.test(p.steamId)).map((p) => [p.steamId, p.elo])),
     cvars: {
       matchzy_remote_log_url: eventsUrl,
       matchzy_remote_log_header_key: "Authorization",
