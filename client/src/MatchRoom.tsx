@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { Badge, Box, Button, Flex, Heading, HStack, Stack, Text } from "@chakra-ui/react";
+import { Badge, Box, Button, Flex, Heading, HStack, Image, Stack, Text } from "@chakra-ui/react";
+import { mapName, mapThumb } from "./maps";
+import { play, type SoundName } from "./sound";
 import {
   getMatch,
   inviteToMatch,
@@ -25,32 +27,58 @@ const phaseLabel: Record<string, string> = {
 
 function TeamPanel({
   title,
+  side,
   players,
   myUserId,
+  captainId,
   canJoin,
   onJoin,
 }: {
   title: string;
+  side: "a" | "b";
   players: MatchPlayer[];
   myUserId: string;
+  captainId: string | null;
   canJoin: boolean;
   onJoin: () => void;
 }) {
   const amIn = players.some((p) => p.userId === myUserId);
+  const slots = Array.from({ length: Math.max(0, 5 - players.length) });
   return (
-    <Box className="panel-card team-panel" flex="1" p="4">
+    <Box className={`panel-card team-panel team-${side}`} flex="1" p="4">
       <Flex align="center" justify="space-between" mb="3">
-        <Heading as="h3" size="sm">{title}</Heading>
+        <Box>
+          <Text className="team-side" fontFamily="mono" fontSize="xs">{side === "a" ? "TIME A" : "TIME B"}</Text>
+          <Heading as="h3" size="md">{title}</Heading>
+        </Box>
         <Badge className="state-badge">{players.length}/5</Badge>
       </Flex>
       <Stack gap="2">
-        {players.map((p) => (
-          <Flex className={p.userId === myUserId ? "room-player is-me" : "room-player"} justify="space-between" key={p.userId} px="3" py="2">
-            <Text fontSize="sm">{p.displayName}</Text>
-            <Text fontFamily="mono" fontSize="xs">{p.steamId.slice(-6)}</Text>
+        {players.map((p, i) => (
+          <Flex
+            align="center"
+            className={p.userId === myUserId ? "room-player is-me rise-in" : "room-player rise-in"}
+            gap="3"
+            key={p.userId}
+            px="3"
+            py="2"
+            style={{ animationDelay: `${i * 50}ms` }}
+          >
+            {p.avatarUrl ? (
+              <Image alt="" borderRadius="md" boxSize="9" src={p.avatarUrl} />
+            ) : (
+              <Box className="avatar-fallback">{p.displayName.slice(0, 1).toUpperCase()}</Box>
+            )}
+            <Text flex="1" fontSize="sm" fontWeight="bold" truncate>{p.displayName}</Text>
+            {p.userId === captainId ? <Badge className="captain-badge">CAPITÃO</Badge> : null}
           </Flex>
         ))}
-        {players.length === 0 ? <Text className="admin-subtitle">Aguardando jogadores…</Text> : null}
+        {slots.map((_, i) => (
+          <Flex align="center" className="room-player is-empty" gap="3" key={`empty-${i}`} px="3" py="2">
+            <Box className="avatar-fallback is-empty" />
+            <Text className="admin-subtitle" fontSize="sm" mt="0">Vaga aberta</Text>
+          </Flex>
+        ))}
       </Stack>
       {canJoin && !amIn ? (
         <Button className="primary-button" mt="3" onClick={onJoin} size="sm" w="full">ENTRAR NESTE TIME</Button>
@@ -81,9 +109,9 @@ export default function MatchRoom({ matchId, user, onBack }: { matchId: string; 
     return () => { controller.abort(); clearInterval(timer); };
   }, [refresh]);
 
-  const act = async (fn: () => Promise<unknown>, ok: string) => {
-    try { await fn(); setFeedback(ok); await refresh(); }
-    catch { setFeedback("Ação não permitida agora."); }
+  const act = async (fn: () => Promise<unknown>, ok: string, sound: SoundName = "join") => {
+    try { await fn(); play(sound); setFeedback(ok); await refresh(); }
+    catch { play("error"); setFeedback("Ação não permitida agora."); }
   };
 
   if (!match) {
@@ -101,15 +129,26 @@ export default function MatchRoom({ matchId, user, onBack }: { matchId: string; 
   const unassigned = players.filter((p) => p.team === null);
   const isMember = players.some((p) => p.userId === user.id);
   const isCreator = match.createdBy === user.id || isStaff(user);
+  const pickedMap = (match.vetoes ?? []).find((v) => v.action === "pick")?.mapName ?? null;
+  const heroMap = pickedMap ?? match.mapPool[0] ?? match.mapName;
 
   return (
     <Stack gap="5" mx="auto" maxW="1100px">
-      <Flex align="center" justify="space-between" wrap="wrap" gap="3">
+      <Flex
+        align="end"
+        className="room-hero rise-in"
+        gap="3"
+        justify="space-between"
+        p={{ base: "5", md: "7" }}
+        style={{ ["--match-art" as string]: `url(${mapThumb(heroMap, 2)})` }}
+        wrap="wrap"
+      >
         <Box>
-          <Button className="ghost-button" mb="2" onClick={onBack} size="xs">← LOBBY</Button>
-          <Heading as="h1" size="xl">{match.name}</Heading>
+          <Button className="ghost-button" mb="3" onClick={onBack} size="xs">← LOBBY</Button>
+          <Text className="section-label" fontFamily="mono" fontSize="xs">{pickedMap ? `MAPA · ${mapName(pickedMap)}` : "SALA DA PARTIDA"}</Text>
+          <Heading as="h1" className="room-title" size="3xl">{match.name}</Heading>
           <Text fontFamily="mono" fontSize="xs" mt="1">
-            {match.format.toUpperCase()} · MR{match.maxRounds} · {match.id.slice(0, 8)}
+            {match.format === "bo3" ? "MD3" : "MD1"} · MR{match.maxRounds} · {match.id.slice(0, 8)}
           </Text>
         </Box>
         <HStack gap="2">
@@ -133,19 +172,23 @@ export default function MatchRoom({ matchId, user, onBack }: { matchId: string; 
       <Flex className="room-teams" gap="4" wrap={{ base: "wrap", md: "nowrap" }}>
         <TeamPanel
           canJoin={match.phase === "lobby"}
+          captainId={match.captainAId}
           myUserId={user.id}
           onJoin={() => void act(() => setTeam(match.id, "a"), "Você entrou no Time A.")}
           players={teamA}
+          side="a"
           title={match.teamAName}
         />
-        <Flex align="center" className="room-vs" justify="center" minW="48px">
-          <Text fontFamily="mono" fontSize="lg">VS</Text>
+        <Flex align="center" className="room-vs" justify="center" minW="64px">
+          <Text className="vs-mark">VS</Text>
         </Flex>
         <TeamPanel
           canJoin={match.phase === "lobby"}
+          captainId={match.captainBId}
           myUserId={user.id}
           onJoin={() => void act(() => setTeam(match.id, "b"), "Você entrou no Time B.")}
           players={teamB}
+          side="b"
           title={match.teamBName}
         />
       </Flex>
@@ -185,7 +228,7 @@ export default function MatchRoom({ matchId, user, onBack }: { matchId: string; 
               <HStack gap="2" ml="auto">
                 <Button
                   className="ghost-button"
-                  onClick={() => void act(() => shuffleTeams(match.id), "Times sorteados.")}
+                  onClick={() => void act(() => shuffleTeams(match.id), "Times sorteados.", "start")}
                   size="sm"
                 >SORTEAR TIMES</Button>
                 <input
@@ -196,7 +239,7 @@ export default function MatchRoom({ matchId, user, onBack }: { matchId: string; 
                 />
                 <Button
                   className="primary-button"
-                  onClick={() => void act(() => startVeto(match.id, STEAM_ID64.test(captainSteamId) ? captainSteamId : undefined), "Veto iniciado.")}
+                  onClick={() => void act(() => startVeto(match.id, STEAM_ID64.test(captainSteamId) ? captainSteamId : undefined), "Veto iniciado.", "start")}
                   size="sm"
                 >INICIAR VETO</Button>
               </HStack>
@@ -206,9 +249,9 @@ export default function MatchRoom({ matchId, user, onBack }: { matchId: string; 
       ) : null}
 
       {match.phase === "veto" || match.phase === "live" ? (
-        <Box className="panel-card" p="5">
+        <Box className="panel-card rise-in" p="5">
           <Text className="card-kicker" fontFamily="mono" fontSize="xs">VETO DE MAPAS</Text>
-          <VetoBoard match={match} onAction={(action) => void act(() => sendVeto(match.id, action), "Veto registrado.")} user={user} />
+          <VetoBoard match={match} onAction={(action) => void act(() => sendVeto(match.id, action), "Veto registrado.", "click")} user={user} />
         </Box>
       ) : null}
     </Stack>

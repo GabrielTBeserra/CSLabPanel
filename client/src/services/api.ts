@@ -30,6 +30,7 @@ export interface MatchPlayer {
   userId: string;
   steamId: string;
   displayName: string;
+  avatarUrl: string | null;
   team: "a" | "b" | null;
   joinedAt: string;
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   Badge,
   Box,
@@ -12,7 +12,10 @@ import {
   Text,
 } from "@chakra-ui/react";
 import AdminUsers from "./AdminUsers";
+import Backdrop from "./Backdrop";
 import MatchRoom from "./MatchRoom";
+import { DEFAULT_POOL, MAPS, mapIcon, mapName, mapThumb } from "./maps";
+import { isMuted, onMutedChange, play, setMuted } from "./sound";
 import {
   createMatch,
   isStaff,
@@ -37,7 +40,6 @@ import {
 
 type ConnectionState = "checking" | "online" | "offline";
 
-const MAPS = ["de_mirage", "de_inferno", "de_nuke", "de_ancient", "de_anubis", "de_vertigo", "de_overpass"];
 const STEAM_ID64 = /^\d{17}$/;
 
 const initialForm = {
@@ -46,7 +48,7 @@ const initialForm = {
   teamBName: "Time B",
   maxRounds: 24,
   format: "bo1" as MatchFormat,
-  mapPool: [...MAPS],
+  mapPool: [...DEFAULT_POOL],
 };
 
 const phaseLabel: Record<string, string> = {
@@ -92,68 +94,112 @@ function PresenceList({ title, entries, empty }: { title: string; entries: Prese
   );
 }
 
+export function MapCard({
+  map,
+  state,
+  label,
+  actionable,
+  intent,
+  onClick,
+  compact = false,
+}: {
+  map: string;
+  state: "open" | "ban" | "pick" | "decider" | "off";
+  label?: string;
+  actionable?: boolean;
+  intent?: "ban" | "pick";
+  onClick?: () => void;
+  compact?: boolean;
+}) {
+  return (
+    <button
+      className={`map-card is-${state}${actionable ? ` is-actionable intent-${intent ?? "pick"}` : ""}${compact ? " is-compact" : ""}`}
+      disabled={!onClick}
+      onClick={() => { play("click"); onClick?.(); }}
+      type="button"
+    >
+      <span className="map-card-art" style={{ backgroundImage: `url(${mapThumb(map)})` }} />
+      <span className="map-card-shade" />
+      <img alt="" className="map-card-icon" loading="lazy" src={mapIcon(map)} />
+      <span className="map-card-name">{mapName(map)}</span>
+      {label ? <span className="map-card-tag">{label}</span> : null}
+    </button>
+  );
+}
+
 export function VetoBoard({ match, user, onAction }: { match: MatchRecord; user: UserRecord; onAction: (action: { action: "ban" | "pick"; mapName: string } | { action: "side"; side: "a" | "b" }) => void }) {
   const vetoes = match.vetoes ?? [];
-  const pool = match.mapPool.length >= 3 ? match.mapPool : MAPS;
-  const used = new Set(vetoes.filter((v) => v.mapName).map((v) => v.mapName));
-  const remaining = pool.filter((m) => !used.has(m));
+  const pool = match.mapPool.length >= 3 ? match.mapPool : DEFAULT_POOL;
   const steps = vetoStepsFor(match.format);
   const stepIndex = vetoes.length;
   const currentStep = steps[stepIndex];
-  const mapVetoes = vetoes.filter((v) => v.action !== "side");
+  const intent: "ban" | "pick" = currentStep?.startsWith("BAN") ? "ban" : "pick";
   const isMyTurn =
     stepIndex < steps.length &&
     ((currentStep?.endsWith("A") && user.id === match.captainAId) ||
       (currentStep?.endsWith("B") && user.id === match.captainBId));
   const isSideChoice = stepIndex >= steps.length;
   const isSideCaptain = user.id === (match.captainBId ?? match.captainAId);
+  const byMap = new Map(vetoes.filter((v) => v.mapName).map((v) => [v.mapName!, v]));
+  const teamName = (team: "a" | "b" | null) => (team === "a" ? match.teamAName : team === "b" ? match.teamBName : "");
+
+  const vetoCount = vetoes.length;
+  const lastAction = vetoes[vetoCount - 1]?.action;
+  const lastCount = useRef(vetoCount);
+  useEffect(() => {
+    if (vetoCount > lastCount.current) play(lastAction === "ban" ? "ban" : lastAction === "side" ? "start" : "pick");
+    lastCount.current = vetoCount;
+  }, [vetoCount, lastAction]);
 
   return (
     <Box mt="4">
-      <HStack gap="2" mb="3" wrap="wrap">
-        {mapVetoes.map((v) => (
-          <Badge key={v.id} className={v.action === "ban" ? "veto-chip is-ban" : "veto-chip is-pick"}>
-            {v.action === "ban" ? "BAN" : v.actorName === "Decider" ? "DECIDER" : "PICK"} {v.mapName}
-          </Badge>
-        ))}
-        {vetoes.some((v) => v.action === "side") ? (
-          <Badge className="veto-chip is-pick">LADO: {match.sideChoice === "a" ? match.teamAName : match.teamBName}</Badge>
-        ) : null}
-      </HStack>
-      {!isSideChoice ? (
-        <Box>
-          <Text fontFamily="mono" fontSize="xs" mb="2">
-            VEZ: {currentStep} {isMyTurn ? "— sua vez" : "— aguardando capitão"}
-          </Text>
-          <HStack gap="2" wrap="wrap">
-            {remaining.map((map) => (
-              <Button
-                key={map}
-                className={currentStep?.startsWith("BAN") ? "veto-map is-ban" : "veto-map is-pick"}
-                disabled={!isMyTurn}
-                onClick={() => onAction({ action: currentStep!.startsWith("BAN") ? "ban" : "pick", mapName: map })}
-                size="sm"
-              >
-                {map}
-              </Button>
-            ))}
-          </HStack>
-        </Box>
-      ) : match.sideChoice ? (
-        <Text fontSize="sm">Partida pronta — mapa(s) definido(s).</Text>
-      ) : (
-        <Box>
-          <Text fontFamily="mono" fontSize="xs" mb="2">ESCOLHA DE LADO — capitão do Time B</Text>
-          <HStack gap="2">
-            <Button className="veto-map is-pick" disabled={!isSideCaptain} onClick={() => onAction({ action: "side", side: "a" })} size="sm">
-              CT/T {match.teamAName}
-            </Button>
-            <Button className="veto-map is-pick" disabled={!isSideCaptain} onClick={() => onAction({ action: "side", side: "b" })} size="sm">
-              CT/T {match.teamBName}
-            </Button>
-          </HStack>
-        </Box>
-      )}
+      <Flex align="center" className={`veto-turn${isMyTurn ? " is-mine" : ""}`} gap="3" mb="4" px="4" py="3" wrap="wrap">
+        {!isSideChoice ? (
+          <>
+            <Badge className={`veto-chip is-${intent}`}>{currentStep}</Badge>
+            <Text fontWeight="bold">
+              {isMyTurn ? `Sua vez — escolha um mapa para ${intent === "ban" ? "banir" : "pickar"}` : "Aguardando o outro capitão…"}
+            </Text>
+          </>
+        ) : match.sideChoice ? (
+          <Text fontWeight="bold">Veto concluído — {teamName(match.sideChoice)} escolheu o lado.</Text>
+        ) : (
+          <Text fontWeight="bold">{isSideCaptain ? "Escolha qual time começa de CT" : "Aguardando escolha de lado…"}</Text>
+        )}
+        <Text className="veto-progress" fontFamily="mono" fontSize="xs" ml="auto">
+          {Math.min(stepIndex, steps.length)}/{steps.length}
+        </Text>
+      </Flex>
+
+      <Grid className="map-grid" gap="3">
+        {pool.map((map) => {
+          const veto = byMap.get(map);
+          const state = !veto ? "open" : veto.action === "ban" ? "ban" : veto.actorName === "Decider" ? "decider" : "pick";
+          const label = !veto ? undefined : state === "ban" ? `BAN · ${teamName(veto.team)}` : state === "decider" ? "DECIDER" : `PICK · ${teamName(veto.team)}`;
+          return (
+            <MapCard
+              actionable={!veto && !isSideChoice && isMyTurn}
+              intent={intent}
+              key={map}
+              label={label}
+              map={map}
+              onClick={!veto && !isSideChoice && isMyTurn ? () => onAction({ action: intent, mapName: map }) : undefined}
+              state={state}
+            />
+          );
+        })}
+      </Grid>
+
+      {isSideChoice && !match.sideChoice ? (
+        <Grid gap="3" mt="4" templateColumns="1fr 1fr">
+          <Button className="side-button is-ct" disabled={!isSideCaptain} onClick={() => onAction({ action: "side", side: "a" })}>
+            {match.teamAName} começa CT
+          </Button>
+          <Button className="side-button is-t" disabled={!isSideCaptain} onClick={() => onAction({ action: "side", side: "b" })}>
+            {match.teamBName} começa CT
+          </Button>
+        </Grid>
+      ) : null}
     </Box>
   );
 }
@@ -259,12 +305,23 @@ export default function App() {
   const handleAction = async (fn: () => Promise<unknown>, ok: string) => {
     try {
       await fn();
+      play("join");
       setFeedback(ok);
       await refresh();
     } catch {
+      play("error");
       setFeedback("Ação não permitida agora.");
     }
   };
+
+  const [muted, setMutedState] = useState(isMuted());
+  useEffect(() => onMutedChange(setMutedState), []);
+
+  const inviteCount = useRef(0);
+  useEffect(() => {
+    if (invites.length > inviteCount.current) play("notify");
+    inviteCount.current = invites.length;
+  }, [invites]);
 
   const summary = useMemo(
     () => ({ total: matches.length, site: siteOnline.length, server: serverOnline.length }),
@@ -273,6 +330,7 @@ export default function App() {
 
   return (
     <Box className="console-shell" minH="100vh" px={{ base: "4", md: "8" }}>
+      <Backdrop />
       <Flex align="center" className="topbar" justify="space-between" py="5" wrap="wrap" gap="4">
         <HStack align="center" gap="3">
           <Box aria-hidden="true" className="brand-mark">CS</Box>
@@ -281,8 +339,14 @@ export default function App() {
             <Text className="brand-caption" fontFamily="mono" fontSize="xs">MATCH PLATFORM</Text>
           </Stack>
         </HStack>
-        <HStack gap="4">
+        <HStack gap="4" wrap="wrap">
           <ConnectionSignal state={connection} />
+          <Button
+            aria-label={muted ? "Ativar sons" : "Silenciar sons"}
+            className="ghost-button"
+            onClick={() => { setMuted(!muted); if (muted) play("click"); }}
+            size="xs"
+          >{muted ? "SOM: OFF" : "SOM: ON"}</Button>
           {user ? (
             <HStack gap="3">
               {user.avatarUrl ? (
@@ -300,9 +364,10 @@ export default function App() {
 
       <Box as="main" className="admin-frame" py="8">
         {!userLoaded ? null : !user ? (
-          <Box className="panel-card" mx="auto" maxW="560px" p="8" textAlign="center">
+          <Box className="panel-card login-card rise-in" mx="auto" maxW="560px" p="8" textAlign="center">
             <Text className="card-kicker" fontFamily="mono" fontSize="xs">LOGIN NECESSÁRIO</Text>
-            <Heading as="h1" size="2xl" mt="3">Entre com sua Steam</Heading>
+            <Heading as="h1" className="login-title" size="3xl" mt="3">Bora pro <span className="title-accent">servidor</span></Heading>
+            <Text fontWeight="bold" mt="2">Entre com sua Steam</Text>
             <Text className="admin-subtitle" mt="3">
               Você precisa entrar com a Steam para criar partidas, receber convites e jogar.
             </Text>
@@ -375,19 +440,18 @@ export default function App() {
                     </label>
                     <Box className="field">
                       <span>Pool de mapas ({form.mapPool.length})</span>
-                      <HStack gap="2" mt="1" wrap="wrap">
+                      <Grid className="map-grid is-compact" gap="2" mt="1">
                         {MAPS.map((map) => (
-                          <Button
+                          <MapCard
+                            compact
                             key={map}
-                            className={form.mapPool.includes(map) ? "veto-map is-pick" : "veto-map is-ban"}
+                            label={form.mapPool.includes(map) ? "NO POOL" : undefined}
+                            map={map}
                             onClick={() => togglePoolMap(map)}
-                            size="xs"
-                            type="button"
-                          >
-                            {map}
-                          </Button>
+                            state={form.mapPool.includes(map) ? "pick" : "off"}
+                          />
                         ))}
-                      </HStack>
+                      </Grid>
                     </Box>
                     <Grid gap="3" templateColumns="1fr 1fr">
                       <label className="field"><span>Time A</span><input required maxLength={64} onChange={(e) => setForm({ ...form, teamAName: e.target.value })} value={form.teamAName} /></label>
@@ -424,11 +488,19 @@ export default function App() {
                     <Box className="empty-state"><Text>Nenhuma partida criada ainda.</Text></Box>
                   ) : (
                     <Stack gap="3">
-                      {matches.map((match) => {
+                      {matches.map((match, index) => {
                         const isMember = match.players?.some((p) => p.userId === user.id) ?? false;
                         const isCreator = match.createdBy === user.id || isStaff(user);
                         return (
-                          <Box className="panel-card match-card" key={match.id} p="4">
+                          <Box
+                            className="panel-card match-card rise-in"
+                            key={match.id}
+                            p="4"
+                            style={{
+                              animationDelay: `${Math.min(index, 8) * 60}ms`,
+                              ["--match-art" as string]: `url(${mapThumb((match.vetoes ?? []).find((v) => v.action === "pick")?.mapName ?? match.mapPool[0] ?? match.mapName)})`,
+                            }}
+                          >
                             <Flex align="center" justify="space-between" wrap="wrap" gap="3">
                               <Box>
                                 <Heading as="h3" size="md">{match.name}</Heading>

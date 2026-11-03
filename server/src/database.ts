@@ -73,6 +73,7 @@ export interface MatchPlayerRecord {
   userId: string;
   steamId: string;
   displayName: string;
+  avatarUrl: string | null;
   team: "a" | "b" | null;
   joinedAt: string;
 }
@@ -383,13 +384,13 @@ export class PostgresDatabase implements MatchStore {
 
   async listMatchPlayers(matchId: string): Promise<MatchPlayerRecord[]> {
     const r = await this.pool.query<Row>(
-      `SELECT u.id AS user_id, u.steam_id, u.display_name, mp.team, mp.joined_at
+      `SELECT u.id AS user_id, u.steam_id, u.display_name, u.avatar_url, mp.team, mp.joined_at
        FROM match_players mp JOIN users u ON u.id = mp.user_id WHERE mp.match_id = $1 ORDER BY mp.joined_at`,
       [matchId],
     );
     return r.rows.map((row) => ({
       userId: row.user_id, steamId: row.steam_id, displayName: row.display_name,
-      team: row.team, joinedAt: iso(row.joined_at),
+      avatarUrl: row.avatar_url ?? null, team: row.team, joinedAt: iso(row.joined_at),
     }));
   }
 

@@ -4,15 +4,18 @@ const config = defineConfig({
   theme: {
     tokens: {
       colors: {
-        canvas: { value: "#101310" },
-        panel: { value: "#171c18" },
-        raised: { value: "#202720" },
-        line: { value: "#343d35" },
-        text: { value: "#edf2ec" },
-        muted: { value: "#a1aca2" },
-        signal: { value: "#c0fa55" },
-        signalDim: { value: "#26351a" },
-        danger: { value: "#ff786a" },
+        canvas: { value: "#0a0e13" },
+        panel: { value: "#111821" },
+        raised: { value: "#18212d" },
+        line: { value: "#263244" },
+        text: { value: "#eef2f7" },
+        muted: { value: "#8d9aac" },
+        signal: { value: "#ff9f1c" },
+        signalDim: { value: "#3a2508" },
+        danger: { value: "#ff4d5e" },
+        pick: { value: "#3ddc97" },
+        ct: { value: "#5aa9ff" },
+        t: { value: "#f5b83d" },
       },
       fonts: {
         body: { value: "'Space Grotesk', sans-serif" },
