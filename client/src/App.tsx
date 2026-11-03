@@ -19,7 +19,7 @@ import MatchRoom from "./MatchRoom";
 import { DEFAULT_POOL, MAPS, mapIcon, mapName, mapThumb } from "./maps";
 import { serverStateLabel } from "./labels";
 import { PRESETS, describeRules, presetById } from "./presets";
-import { useRealtime, useRealtimeStatus } from "./realtime";
+import { useRealtime, useRealtimeMode } from "./realtime";
 import { isMuted, onMutedChange, play, setMuted } from "./sound";
 import {
   createMatch,
@@ -276,7 +276,7 @@ export default function App() {
   }, [refresh]);
 
   useRealtime(useCallback(() => { void refresh(); }, [refresh]), Boolean(user) && !roomMatch);
-  const live = useRealtimeStatus();
+  const realtimeMode = useRealtimeMode();
 
   useEffect(() => {
     if (!user) return;
@@ -370,9 +370,15 @@ export default function App() {
         <HStack gap="3" wrap="wrap">
           <ConnectionSignal state={connection} />
           {user ? (
-            <HStack className={`connection-signal ${live ? "is-online" : "is-offline"}`} gap="2">
+            <HStack
+              className={`connection-signal ${realtimeMode === "connecting" ? "is-offline" : "is-online"}`}
+              gap="2"
+              title={realtimeMode === "polling" ? "Sua rede não permite streaming; atualizando a cada 4 segundos." : undefined}
+            >
               <Box aria-hidden="true" className="signal-dot" />
-              <Text fontFamily="mono" fontSize="xs">{live ? "AO VIVO" : "RECONECTANDO"}</Text>
+              <Text fontFamily="mono" fontSize="xs">
+                {realtimeMode === "live" ? "AO VIVO" : realtimeMode === "polling" ? "AO VIVO · 4S" : "CONECTANDO"}
+              </Text>
             </HStack>
           ) : null}
           <Button

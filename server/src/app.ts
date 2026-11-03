@@ -727,9 +727,10 @@ export const buildServer = ({
       Connection: "keep-alive",
       "X-Accel-Buffering": "no",
     });
-    raw.write("retry: 3000\n\n");
+    raw.write(`:${" ".repeat(2048)}\nretry: 3000\n\n`);
+    raw.write(`data: ${JSON.stringify({ type: "hello" })}\n\n`);
     const unsubscribe = bus.subscribe((event) => raw.write(`data: ${JSON.stringify(event)}\n\n`));
-    const ping = setInterval(() => raw.write(": ping\n\n"), 25000);
+    const ping = setInterval(() => raw.write(`data: ${JSON.stringify({ type: "ping" })}\n\n`), 15000);
     request.raw.on("close", () => { clearInterval(ping); unsubscribe(); });
   });
 

@@ -123,7 +123,7 @@ export interface LiveState {
 }
 
 export interface RealtimeEvent {
-  type: "match" | "matches" | "presence" | "invites";
+  type: "match" | "matches" | "presence" | "invites" | "hello" | "ping";
   matchId?: string;
 }
 
@@ -256,10 +256,10 @@ export const startDynamicMatch = (input: DynamicStartInput) =>
 
 export const subscribeRealtime = (onEvent: (event: RealtimeEvent) => void, onStatus?: (connected: boolean) => void) => {
   const source = new EventSource(`${apiBaseUrl}/stream`, { withCredentials: true });
-  source.onopen = () => onStatus?.(true);
   source.onerror = () => onStatus?.(false);
   source.onmessage = (message) => {
-    try { onEvent(JSON.parse(message.data) as RealtimeEvent); } catch { onStatus?.(true); }
+    onStatus?.(true);
+    try { onEvent(JSON.parse(message.data) as RealtimeEvent); } catch { return; }
   };
   return () => source.close();
 };

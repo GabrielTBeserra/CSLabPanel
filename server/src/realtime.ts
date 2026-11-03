@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 
 export interface RealtimeEvent {
-  type: "match" | "matches" | "presence" | "invites";
+  type: "match" | "matches" | "presence" | "invites" | "hello" | "ping";
   matchId?: string;
 }
 
