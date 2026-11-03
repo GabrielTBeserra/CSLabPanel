@@ -125,10 +125,12 @@ function ResultPanel({ match, result }: { match: MatchRecord; result: MatchResul
       </Flex>
       <Box overflowX="auto">
         <table className="score-table">
-          <thead><tr><th>Jogador</th><th>Time</th><th>K</th><th>D</th><th>A</th><th>ADR</th><th>HS%</th><th>ELO</th></tr></thead>
+          <thead><tr><th>Jogador</th><th>Time</th><th>K</th><th>D</th><th>A</th><th>ADR</th><th>HS%</th><th>KAST%</th><th>2K+</th><th>CLT</th><th>FK</th><th>UD</th><th>FB</th><th>P/D</th><th>SCR</th><th>ELO</th></tr></thead>
           <tbody>
             {result.players.map((p) => {
               const delta = p.eloAfter !== null && p.eloBefore !== null ? p.eloAfter - p.eloBefore : null;
+              const multi = p.kills2 + p.kills3 + p.kills4 + p.kills5;
+              const clutch = p.oneV1 + p.oneV2 + p.oneV3 + p.oneV4 + p.oneV5;
               return (
                 <tr key={p.steamId}>
                   <td className="score-name">{p.name}{p.steamId === result.mvpSteamId ? " ★" : ""}{p.steamId === result.worstSteamId ? " ▼" : ""}</td>
@@ -138,6 +140,14 @@ function ResultPanel({ match, result }: { match: MatchRecord; result: MatchResul
                   <td>{p.assists}</td>
                   <td>{result.rounds > 0 ? Math.round(p.damage / result.rounds) : 0}</td>
                   <td>{p.kills > 0 ? Math.round((p.headshotKills / p.kills) * 100) : 0}</td>
+                  <td>{p.kast}</td>
+                  <td>{multi}</td>
+                  <td>{clutch}</td>
+                  <td>{p.firstKills}</td>
+                  <td>{p.utilityDamage}</td>
+                  <td>{p.enemiesFlashed}</td>
+                  <td>{p.bombPlants}/{p.bombDefuses}</td>
+                  <td>{p.score}</td>
                   <td className={delta === null ? "" : delta >= 0 ? "elo-up" : "elo-down"}>{delta === null ? "—" : `${delta >= 0 ? "+" : ""}${delta}`}</td>
                 </tr>
               );

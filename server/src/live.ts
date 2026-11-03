@@ -86,6 +86,13 @@ const playersFrom = (teamStats: Json, team: "a" | "b"): LivePlayer[] =>
     return {
       steamId: String(p.steamid ?? ""), name: String(p.name ?? "?"), team,
       kills: num(s.kills), deaths: num(s.deaths), assists: num(s.assists), damage: num(s.damage), headshotKills: num(s.headshot_kills),
+      utilityDamage: num(s.utility_damage), enemiesFlashed: num(s.enemies_flashed), friendliesFlashed: num(s.friendlies_flashed),
+      flashAssists: num(s.flash_assists), teamKills: num(s.team_kills), suicides: num(s.suicides), knifeKills: num(s.knife_kills),
+      roundsPlayed: num(s.rounds_played), bombPlants: num(s.bomb_plants), bombDefuses: num(s.bomb_defuses),
+      kills1: num(s["1k"]), kills2: num(s["2k"]), kills3: num(s["3k"]), kills4: num(s["4k"]), kills5: num(s["5k"]),
+      oneV1: num(s["1v1"]), oneV2: num(s["1v2"]), oneV3: num(s["1v3"]), oneV4: num(s["1v4"]), oneV5: num(s["1v5"]),
+      firstKills: num(s.first_kills_t) + num(s.first_kills_ct), firstDeaths: num(s.first_deaths_t) + num(s.first_deaths_ct),
+      tradeKills: num(s.trade_kills), kast: num(s.kast), score: num(s.score), mvps: num(s.mvp),
     };
   });
 
@@ -97,9 +104,22 @@ export const addTotals = (totals: LivePlayer[], players: LivePlayer[]): LivePlay
     const current = merged.get(p.steamId);
     if (!current) merged.set(p.steamId, { ...p });
     else {
+      const rounds = current.roundsPlayed + p.roundsPlayed;
       Object.assign(current, {
         name: p.name, team: p.team, kills: current.kills + p.kills, deaths: current.deaths + p.deaths,
         assists: current.assists + p.assists, damage: current.damage + p.damage, headshotKills: current.headshotKills + p.headshotKills,
+        utilityDamage: current.utilityDamage + p.utilityDamage, enemiesFlashed: current.enemiesFlashed + p.enemiesFlashed,
+        friendliesFlashed: current.friendliesFlashed + p.friendliesFlashed, flashAssists: current.flashAssists + p.flashAssists,
+        teamKills: current.teamKills + p.teamKills, suicides: current.suicides + p.suicides, knifeKills: current.knifeKills + p.knifeKills,
+        roundsPlayed: rounds, bombPlants: current.bombPlants + p.bombPlants, bombDefuses: current.bombDefuses + p.bombDefuses,
+        kills1: current.kills1 + p.kills1, kills2: current.kills2 + p.kills2, kills3: current.kills3 + p.kills3,
+        kills4: current.kills4 + p.kills4, kills5: current.kills5 + p.kills5,
+        oneV1: current.oneV1 + p.oneV1, oneV2: current.oneV2 + p.oneV2, oneV3: current.oneV3 + p.oneV3,
+        oneV4: current.oneV4 + p.oneV4, oneV5: current.oneV5 + p.oneV5,
+        firstKills: current.firstKills + p.firstKills, firstDeaths: current.firstDeaths + p.firstDeaths,
+        tradeKills: current.tradeKills + p.tradeKills,
+        kast: rounds > 0 ? Math.round((current.kast * current.roundsPlayed + p.kast * p.roundsPlayed) / rounds) : 0,
+        score: current.score + p.score, mvps: current.mvps + p.mvps,
       });
     }
   }

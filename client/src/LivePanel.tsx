@@ -12,11 +12,11 @@ function Scoreboard({ title, side, players }: { title: string; side: "a" | "b"; 
       <Text className="team-side" fontFamily="mono" fontSize="xs" mb="2">{title}</Text>
       <table className="score-table">
         <thead>
-          <tr><th>Jogador</th><th>K</th><th>D</th><th>A</th><th>HS%</th><th>DMG</th></tr>
+          <tr><th>Jogador</th><th>K</th><th>D</th><th>A</th><th>HS%</th><th>DMG</th><th>UD</th><th>FB</th><th>KAST%</th></tr>
         </thead>
         <tbody>
           {sorted.length === 0 ? (
-            <tr><td colSpan={6} className="score-empty">Sem estatísticas ainda</td></tr>
+            <tr><td colSpan={9} className="score-empty">Sem estatísticas ainda</td></tr>
           ) : sorted.map((p) => (
             <tr key={p.steamId}>
               <td className="score-name">{p.name}</td>
@@ -25,6 +25,9 @@ function Scoreboard({ title, side, players }: { title: string; side: "a" | "b"; 
               <td>{p.assists}</td>
               <td>{p.kills > 0 ? Math.round((p.headshotKills / p.kills) * 100) : 0}</td>
               <td>{p.damage}</td>
+              <td>{p.utilityDamage}</td>
+              <td>{p.enemiesFlashed}</td>
+              <td>{p.kast}</td>
             </tr>
           ))}
         </tbody>

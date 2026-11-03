@@ -45,6 +45,32 @@ export interface LivePlayer {
   assists: number;
   damage: number;
   headshotKills: number;
+  utilityDamage: number;
+  enemiesFlashed: number;
+  friendliesFlashed: number;
+  flashAssists: number;
+  teamKills: number;
+  suicides: number;
+  knifeKills: number;
+  roundsPlayed: number;
+  bombPlants: number;
+  bombDefuses: number;
+  kills1: number;
+  kills2: number;
+  kills3: number;
+  kills4: number;
+  kills5: number;
+  oneV1: number;
+  oneV2: number;
+  oneV3: number;
+  oneV4: number;
+  oneV5: number;
+  firstKills: number;
+  firstDeaths: number;
+  tradeKills: number;
+  kast: number;
+  score: number;
+  mvps: number;
 }
 
 export interface LiveKill {
@@ -193,15 +219,7 @@ export interface MatchStore {
   getPlayerProfile(steamId: string): Promise<PlayerProfile | null>;
 }
 
-export interface PlayerMatchStats {
-  steamId: string;
-  name: string;
-  team: "a" | "b";
-  kills: number;
-  deaths: number;
-  assists: number;
-  damage: number;
-  headshotKills: number;
+export interface PlayerMatchStats extends LivePlayer {
   won: boolean;
   eloBefore: number | null;
   eloAfter: number | null;
@@ -401,6 +419,32 @@ export class PostgresDatabase implements MatchStore {
       );
       CREATE INDEX IF NOT EXISTS match_player_stats_steam_idx ON match_player_stats (steam_id);
       ALTER TABLE match_results ADD COLUMN IF NOT EXISTS worst_steam_id TEXT;
+      ALTER TABLE match_player_stats ADD COLUMN IF NOT EXISTS utility_damage INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE match_player_stats ADD COLUMN IF NOT EXISTS enemies_flashed INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE match_player_stats ADD COLUMN IF NOT EXISTS friendlies_flashed INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE match_player_stats ADD COLUMN IF NOT EXISTS flash_assists INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE match_player_stats ADD COLUMN IF NOT EXISTS team_kills INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE match_player_stats ADD COLUMN IF NOT EXISTS suicides INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE match_player_stats ADD COLUMN IF NOT EXISTS knife_kills INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE match_player_stats ADD COLUMN IF NOT EXISTS rounds_played INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE match_player_stats ADD COLUMN IF NOT EXISTS bomb_plants INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE match_player_stats ADD COLUMN IF NOT EXISTS bomb_defuses INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE match_player_stats ADD COLUMN IF NOT EXISTS kills1 INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE match_player_stats ADD COLUMN IF NOT EXISTS kills2 INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE match_player_stats ADD COLUMN IF NOT EXISTS kills3 INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE match_player_stats ADD COLUMN IF NOT EXISTS kills4 INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE match_player_stats ADD COLUMN IF NOT EXISTS kills5 INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE match_player_stats ADD COLUMN IF NOT EXISTS one_v1 INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE match_player_stats ADD COLUMN IF NOT EXISTS one_v2 INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE match_player_stats ADD COLUMN IF NOT EXISTS one_v3 INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE match_player_stats ADD COLUMN IF NOT EXISTS one_v4 INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE match_player_stats ADD COLUMN IF NOT EXISTS one_v5 INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE match_player_stats ADD COLUMN IF NOT EXISTS first_kills INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE match_player_stats ADD COLUMN IF NOT EXISTS first_deaths INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE match_player_stats ADD COLUMN IF NOT EXISTS trade_kills INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE match_player_stats ADD COLUMN IF NOT EXISTS kast INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE match_player_stats ADD COLUMN IF NOT EXISTS score INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE match_player_stats ADD COLUMN IF NOT EXISTS mvps INTEGER NOT NULL DEFAULT 0;
       CREATE TABLE IF NOT EXISTS server_players (
         steam_id TEXT PRIMARY KEY CHECK (steam_id ~ '^[0-9]{17}$'),
         display_name TEXT NOT NULL,
@@ -659,9 +703,15 @@ export class PostgresDatabase implements MatchStore {
       }
       for (const p of result.players) {
         await client.query(
-          `INSERT INTO match_player_stats (match_id, steam_id, name, team, kills, deaths, assists, damage, headshot_kills, won, elo_before, elo_after)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT DO NOTHING`,
-          [result.matchId, p.steamId, p.name, p.team, p.kills, p.deaths, p.assists, p.damage, p.headshotKills, p.won, p.eloBefore, p.eloAfter],
+          `INSERT INTO match_player_stats (match_id, steam_id, name, team, kills, deaths, assists, damage, headshot_kills, won, elo_before, elo_after,
+             utility_damage, enemies_flashed, friendlies_flashed, flash_assists, team_kills, suicides, knife_kills, rounds_played,
+             bomb_plants, bomb_defuses, kills1, kills2, kills3, kills4, kills5, one_v1, one_v2, one_v3, one_v4, one_v5,
+             first_kills, first_deaths, trade_kills, kast, score, mvps)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38) ON CONFLICT DO NOTHING`,
+          [result.matchId, p.steamId, p.name, p.team, p.kills, p.deaths, p.assists, p.damage, p.headshotKills, p.won, p.eloBefore, p.eloAfter,
+            p.utilityDamage, p.enemiesFlashed, p.friendliesFlashed, p.flashAssists, p.teamKills, p.suicides, p.knifeKills, p.roundsPlayed,
+            p.bombPlants, p.bombDefuses, p.kills1, p.kills2, p.kills3, p.kills4, p.kills5, p.oneV1, p.oneV2, p.oneV3, p.oneV4, p.oneV5,
+            p.firstKills, p.firstDeaths, p.tradeKills, p.kast, p.score, p.mvps],
         );
         if (p.eloAfter !== null) await client.query(`UPDATE users SET elo = $2 WHERE steam_id = $1`, [p.steamId, p.eloAfter]);
       }
@@ -678,6 +728,13 @@ export class PostgresDatabase implements MatchStore {
   private toStats = (row: Row): PlayerMatchStats => ({
     steamId: row.steam_id, name: row.name, team: row.team, kills: row.kills, deaths: row.deaths, assists: row.assists,
     damage: row.damage, headshotKills: row.headshot_kills, won: row.won, eloBefore: row.elo_before, eloAfter: row.elo_after,
+    utilityDamage: row.utility_damage ?? 0, enemiesFlashed: row.enemies_flashed ?? 0, friendliesFlashed: row.friendlies_flashed ?? 0,
+    flashAssists: row.flash_assists ?? 0, teamKills: row.team_kills ?? 0, suicides: row.suicides ?? 0, knifeKills: row.knife_kills ?? 0,
+    roundsPlayed: row.rounds_played ?? 0, bombPlants: row.bomb_plants ?? 0, bombDefuses: row.bomb_defuses ?? 0,
+    kills1: row.kills1 ?? 0, kills2: row.kills2 ?? 0, kills3: row.kills3 ?? 0, kills4: row.kills4 ?? 0, kills5: row.kills5 ?? 0,
+    oneV1: row.one_v1 ?? 0, oneV2: row.one_v2 ?? 0, oneV3: row.one_v3 ?? 0, oneV4: row.one_v4 ?? 0, oneV5: row.one_v5 ?? 0,
+    firstKills: row.first_kills ?? 0, firstDeaths: row.first_deaths ?? 0, tradeKills: row.trade_kills ?? 0,
+    kast: row.kast ?? 0, score: row.score ?? 0, mvps: row.mvps ?? 0,
   });
 
   async getMatchResult(matchId: string): Promise<MatchResultRecord | null> {
