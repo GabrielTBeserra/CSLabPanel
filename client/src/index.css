@@ -477,3 +477,51 @@ a:focus-visible {
     font-size: 2.25rem;
   }
 }
+
+.veto-chip {
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.veto-chip.is-ban {
+  background: rgba(255, 77, 94, 0.15);
+  color: #ff8f9b;
+  border: 1px solid rgba(255, 77, 94, 0.4);
+}
+.veto-chip.is-pick {
+  background: rgba(72, 199, 142, 0.15);
+  color: #7fe0b6;
+  border: 1px solid rgba(72, 199, 142, 0.4);
+}
+.veto-map {
+  font-family: var(--chakra-fonts-mono, monospace);
+  text-transform: uppercase;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.04);
+}
+.veto-map.is-ban:not(:disabled) {
+  border-color: rgba(255, 77, 94, 0.5);
+  color: #ff8f9b;
+}
+.veto-map.is-pick:not(:disabled) {
+  border-color: rgba(72, 199, 142, 0.5);
+  color: #7fe0b6;
+}
+.veto-map:disabled {
+  opacity: 0.55;
+}
+.match-status.is-lobby {
+  background: rgba(120, 160, 255, 0.15);
+  color: #9db9ff;
+}
+.match-status.is-veto {
+  background: rgba(255, 190, 80, 0.15);
+  color: #ffd08a;
+}
+.match-status.is-live {
+  background: rgba(72, 199, 142, 0.15);
+  color: #7fe0b6;
+}
+.match-status.is-finished {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.55);
+}

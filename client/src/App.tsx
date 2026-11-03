@@ -7,6 +7,7 @@ import {
   Grid,
   Heading,
   HStack,
+  Image,
   Stack,
   Text,
 } from "@chakra-ui/react";
@@ -21,7 +22,10 @@ import {
   listMatches,
   logout,
   respondInvite,
+  sendVeto,
+  startVeto,
   type InviteRecord,
+  type MatchFormat,
   type MatchRecord,
   type PresenceEntry,
   type UserRecord,
@@ -29,15 +33,29 @@ import {
 
 type ConnectionState = "checking" | "online" | "offline";
 
-const maps = ["de_mirage", "de_inferno", "de_nuke", "de_ancient", "de_anubis", "de_vertigo", "de_overpass"];
+const MAPS = ["de_mirage", "de_inferno", "de_nuke", "de_ancient", "de_anubis", "de_vertigo", "de_overpass"];
+const STEAM_ID64 = /^\d{17}$/;
 
 const initialForm = {
   name: "",
-  mapName: "de_mirage",
   teamAName: "Time A",
   teamBName: "Time B",
   maxRounds: 24,
+  format: "bo1" as MatchFormat,
+  mapPool: [...MAPS],
 };
+
+const phaseLabel: Record<string, string> = {
+  lobby: "LOBBY",
+  veto: "VETO",
+  live: "AO VIVO",
+  finished: "FINALIZADA",
+};
+
+const vetoStepsFor = (format: MatchFormat) =>
+  format === "bo3"
+    ? ["BAN A", "BAN B", "PICK A", "PICK B", "BAN A", "BAN B"]
+    : ["BAN A", "BAN B", "BAN A", "BAN B", "BAN A", "BAN B"];
 
 function ConnectionSignal({ state }: { state: ConnectionState }) {
   return (
@@ -70,6 +88,72 @@ function PresenceList({ title, entries, empty }: { title: string; entries: Prese
   );
 }
 
+function VetoBoard({ match, user, onAction }: { match: MatchRecord; user: UserRecord; onAction: (action: { action: "ban" | "pick"; mapName: string } | { action: "side"; side: "a" | "b" }) => void }) {
+  const vetoes = match.vetoes ?? [];
+  const pool = match.mapPool.length >= 3 ? match.mapPool : MAPS;
+  const used = new Set(vetoes.filter((v) => v.mapName).map((v) => v.mapName));
+  const remaining = pool.filter((m) => !used.has(m));
+  const steps = vetoStepsFor(match.format);
+  const stepIndex = vetoes.length;
+  const currentStep = steps[stepIndex];
+  const mapVetoes = vetoes.filter((v) => v.action !== "side");
+  const isMyTurn =
+    stepIndex < steps.length &&
+    ((currentStep?.endsWith("A") && user.id === match.captainAId) ||
+      (currentStep?.endsWith("B") && user.id === match.captainBId));
+  const isSideChoice = stepIndex >= steps.length;
+  const isSideCaptain = user.id === (match.captainBId ?? match.captainAId);
+
+  return (
+    <Box mt="4">
+      <HStack gap="2" mb="3" wrap="wrap">
+        {mapVetoes.map((v) => (
+          <Badge key={v.id} className={v.action === "ban" ? "veto-chip is-ban" : "veto-chip is-pick"}>
+            {v.action === "ban" ? "BAN" : v.actorName === "Decider" ? "DECIDER" : "PICK"} {v.mapName}
+          </Badge>
+        ))}
+        {vetoes.some((v) => v.action === "side") ? (
+          <Badge className="veto-chip is-pick">LADO: {match.sideChoice === "a" ? match.teamAName : match.teamBName}</Badge>
+        ) : null}
+      </HStack>
+      {!isSideChoice ? (
+        <Box>
+          <Text fontFamily="mono" fontSize="xs" mb="2">
+            VEZ: {currentStep} {isMyTurn ? "— sua vez" : "— aguardando capitão"}
+          </Text>
+          <HStack gap="2" wrap="wrap">
+            {remaining.map((map) => (
+              <Button
+                key={map}
+                className={currentStep?.startsWith("BAN") ? "veto-map is-ban" : "veto-map is-pick"}
+                disabled={!isMyTurn}
+                onClick={() => onAction({ action: currentStep!.startsWith("BAN") ? "ban" : "pick", mapName: map })}
+                size="sm"
+              >
+                {map}
+              </Button>
+            ))}
+          </HStack>
+        </Box>
+      ) : match.sideChoice ? (
+        <Text fontSize="sm">Partida pronta — mapa(s) definido(s).</Text>
+      ) : (
+        <Box>
+          <Text fontFamily="mono" fontSize="xs" mb="2">ESCOLHA DE LADO — capitão do Time B</Text>
+          <HStack gap="2">
+            <Button className="veto-map is-pick" disabled={!isSideCaptain} onClick={() => onAction({ action: "side", side: "a" })} size="sm">
+              CT/T {match.teamAName}
+            </Button>
+            <Button className="veto-map is-pick" disabled={!isSideCaptain} onClick={() => onAction({ action: "side", side: "b" })} size="sm">
+              CT/T {match.teamBName}
+            </Button>
+          </HStack>
+        </Box>
+      )}
+    </Box>
+  );
+}
+
 export default function App() {
   const [connection, setConnection] = useState<ConnectionState>("checking");
   const [user, setUser] = useState<UserRecord | null>(null);
@@ -82,6 +166,7 @@ export default function App() {
   const [feedback, setFeedback] = useState("");
   const [isBusy, setIsBusy] = useState(false);
   const [inviteSteamId, setInviteSteamId] = useState("");
+  const [captainSteamId, setCaptainSteamId] = useState("");
 
   const refresh = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -115,15 +200,20 @@ export default function App() {
     return () => controller.abort();
   }, [refresh]);
 
-  const summary = useMemo(
-    () => ({
-      total: matches.length,
-      site: siteOnline.length,
-      server: serverOnline.length,
-      invites: invites.length,
-    }),
-    [matches, siteOnline, serverOnline, invites],
-  );
+  useEffect(() => {
+    if (!user) return;
+    const timer = setInterval(() => void refresh(), 15000);
+    return () => clearInterval(timer);
+  }, [user, refresh]);
+
+  const togglePoolMap = (map: string) => {
+    setForm((current) => ({
+      ...current,
+      mapPool: current.mapPool.includes(map)
+        ? current.mapPool.filter((m) => m !== map)
+        : [...current.mapPool, map],
+    }));
+  };
 
   const submitMatch = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -132,63 +222,37 @@ export default function App() {
     try {
       await createMatch({
         name: form.name.trim(),
-        mapName: form.mapName,
+        mapName: form.mapPool[0] ?? "de_mirage",
         teamAName: form.teamAName.trim(),
         teamBName: form.teamBName.trim(),
         maxRounds: form.maxRounds,
+        format: form.format,
+        mapPool: form.mapPool,
       });
-      setForm({ ...initialForm, mapName: form.mapName });
+      setForm(initialForm);
       setFeedback("Partida criada com sucesso.");
       await refresh();
     } catch {
-      setFeedback("Não foi possível criar a partida.");
+      setFeedback("Não foi possível criar a partida (pool precisa de 3+ mapas).");
     } finally {
       setIsBusy(false);
     }
   };
 
-  const handleJoin = async (matchId: string) => {
+  const handleAction = async (fn: () => Promise<unknown>, ok: string) => {
     try {
-      await joinMatch(matchId);
-      setFeedback("Você entrou na partida.");
+      await fn();
+      setFeedback(ok);
       await refresh();
     } catch {
-      setFeedback("Não foi possível entrar na partida.");
+      setFeedback("Ação não permitida agora.");
     }
   };
 
-  const handleInvite = async (matchId: string) => {
-    if (!/^\d{17}$/.test(inviteSteamId)) {
-      setFeedback("Informe um SteamID64 válido (17 dígitos).");
-      return;
-    }
-    try {
-      await inviteToMatch(matchId, inviteSteamId);
-      setInviteSteamId("");
-      setFeedback("Convite enviado.");
-      await refresh();
-    } catch {
-      setFeedback("Não foi possível enviar o convite.");
-    }
-  };
-
-  const handleRespond = async (inviteId: string, accept: boolean) => {
-    try {
-      await respondInvite(inviteId, accept);
-      await refresh();
-    } catch {
-      setFeedback("Não foi possível responder ao convite.");
-    }
-  };
-
-  const handleLogout = async () => {
-    await logout().catch(() => undefined);
-    setUser(null);
-    setMatches([]);
-    setInvites([]);
-    setSiteOnline([]);
-    setServerOnline([]);
-  };
+  const summary = useMemo(
+    () => ({ total: matches.length, site: siteOnline.length, server: serverOnline.length }),
+    [matches, siteOnline, serverOnline],
+  );
 
   return (
     <Box className="console-shell" minH="100vh" px={{ base: "4", md: "8" }}>
@@ -204,8 +268,11 @@ export default function App() {
           <ConnectionSignal state={connection} />
           {user ? (
             <HStack gap="3">
+              {user.avatarUrl ? (
+                <Image alt={user.displayName} borderRadius="full" boxSize="8" src={user.avatarUrl} />
+              ) : null}
               <Badge className="state-badge is-online">{user.displayName}</Badge>
-              <Button className="ghost-button" onClick={() => void handleLogout()} size="xs">SAIR</Button>
+              <Button className="ghost-button" onClick={() => { void logout().catch(() => undefined); setUser(null); setMatches([]); setInvites([]); }} size="xs">SAIR</Button>
             </HStack>
           ) : null}
         </HStack>
@@ -234,7 +301,7 @@ export default function App() {
                   <Flex justify="space-between"><Text>Partidas</Text><Text fontFamily="mono">{summary.total}</Text></Flex>
                   <Flex justify="space-between"><Text>Site</Text><Text fontFamily="mono">{summary.site}</Text></Flex>
                   <Flex justify="space-between"><Text>CS2</Text><Text fontFamily="mono">{summary.server}</Text></Flex>
-                  <Flex justify="space-between"><Text>Convites</Text><Text fontFamily="mono">{summary.invites}</Text></Flex>
+                  <Flex justify="space-between"><Text>Convites</Text><Text fontFamily="mono">{invites.length}</Text></Flex>
                 </Stack>
               </Box>
             </Stack>
@@ -244,11 +311,9 @@ export default function App() {
                 <Box>
                   <Text className="section-label" fontFamily="mono" fontSize="xs">PARTIDAS</Text>
                   <Heading className="admin-title" as="h1" size="3xl">Lobby</Heading>
-                  <Text className="admin-subtitle">Crie partidas, convide jogadores pelo SteamID64 e entre nos jogos.</Text>
+                  <Text className="admin-subtitle">Crie partidas MD1/MD3, defina capitães e faça o veto de mapas.</Text>
                 </Box>
-                <Button className="ghost-button" disabled={isBusy} onClick={() => void refresh()} size="sm">
-                  ATUALIZAR
-                </Button>
+                <Button className="ghost-button" disabled={isBusy} onClick={() => void refresh()} size="sm">ATUALIZAR</Button>
               </Flex>
 
               {feedback ? <Box className="notice" p="4"><Text>{feedback}</Text></Box> : null}
@@ -261,8 +326,8 @@ export default function App() {
                       <Flex key={invite.id} align="center" justify="space-between" wrap="wrap" gap="3">
                         <Text>{invite.inviterName} convidou você para <strong>{invite.matchName}</strong></Text>
                         <HStack gap="2">
-                          <Button className="primary-button" onClick={() => void handleRespond(invite.id, true)} size="xs">ACEITAR</Button>
-                          <Button className="ghost-button" onClick={() => void handleRespond(invite.id, false)} size="xs">RECUSAR</Button>
+                          <Button className="primary-button" onClick={() => void handleAction(() => respondInvite(invite.id, true), "Convite aceito.")} size="xs">ACEITAR</Button>
+                          <Button className="ghost-button" onClick={() => void handleAction(() => respondInvite(invite.id, false), "Convite recusado.")} size="xs">RECUSAR</Button>
                         </HStack>
                       </Flex>
                     ))}
@@ -276,13 +341,35 @@ export default function App() {
                   <Heading as="h2" size="lg" mt="2">Criar partida</Heading>
                   <form className="match-form" onSubmit={submitMatch}>
                     <label className="field"><span>Nome</span><input required maxLength={80} onChange={(e) => setForm({ ...form, name: e.target.value })} value={form.name} /></label>
-                    <label className="field"><span>Mapa</span><select onChange={(e) => setForm({ ...form, mapName: e.target.value })} value={form.mapName}>{maps.map((map) => <option key={map} value={map}>{map}</option>)}</select></label>
+                    <label className="field">
+                      <span>Formato</span>
+                      <select onChange={(e) => setForm({ ...form, format: e.target.value as MatchFormat })} value={form.format}>
+                        <option value="bo1">MD1 — melhor de 1</option>
+                        <option value="bo3">MD3 — melhor de 3</option>
+                      </select>
+                    </label>
+                    <Box className="field">
+                      <span>Pool de mapas ({form.mapPool.length})</span>
+                      <HStack gap="2" mt="1" wrap="wrap">
+                        {MAPS.map((map) => (
+                          <Button
+                            key={map}
+                            className={form.mapPool.includes(map) ? "veto-map is-pick" : "veto-map is-ban"}
+                            onClick={() => togglePoolMap(map)}
+                            size="xs"
+                            type="button"
+                          >
+                            {map}
+                          </Button>
+                        ))}
+                      </HStack>
+                    </Box>
                     <Grid gap="3" templateColumns="1fr 1fr">
                       <label className="field"><span>Time A</span><input required maxLength={64} onChange={(e) => setForm({ ...form, teamAName: e.target.value })} value={form.teamAName} /></label>
                       <label className="field"><span>Time B</span><input required maxLength={64} onChange={(e) => setForm({ ...form, teamBName: e.target.value })} value={form.teamBName} /></label>
                     </Grid>
                     <label className="field"><span>Máximo de rounds</span><input min="1" max="30" onChange={(e) => setForm({ ...form, maxRounds: Number(e.target.value) })} type="number" value={form.maxRounds} /></label>
-                    <Button className="primary-button" disabled={isBusy} mt="2" type="submit">
+                    <Button className="primary-button" disabled={isBusy || form.mapPool.length < 3} mt="2" type="submit">
                       {isBusy ? "CRIANDO..." : "CRIAR PARTIDA"}
                     </Button>
                   </form>
@@ -297,10 +384,16 @@ export default function App() {
                     <Badge className="state-badge">{summary.total}</Badge>
                   </Flex>
 
-                  <Box className="field" mb="4">
-                    <span>Convidar por SteamID64</span>
-                    <input onChange={(e) => setInviteSteamId(e.target.value)} placeholder="7656119..." value={inviteSteamId} />
-                  </Box>
+                  <Grid gap="3" mb="4" templateColumns="1fr 1fr">
+                    <Box className="field">
+                      <span>Convidar (SteamID64)</span>
+                      <input onChange={(e) => setInviteSteamId(e.target.value)} placeholder="7656119..." value={inviteSteamId} />
+                    </Box>
+                    <Box className="field">
+                      <span>Capitão B (SteamID64, opcional)</span>
+                      <input onChange={(e) => setCaptainSteamId(e.target.value)} placeholder="7656119..." value={captainSteamId} />
+                    </Box>
+                  </Grid>
 
                   {matches.length === 0 ? (
                     <Box className="empty-state"><Text>Nenhuma partida criada ainda.</Text></Box>
@@ -308,12 +401,15 @@ export default function App() {
                     <Stack gap="3">
                       {matches.map((match) => {
                         const isMember = match.players?.some((p) => p.userId === user.id) ?? false;
+                        const isCreator = match.createdBy === user.id;
                         return (
-                          <Box className="panel-card" key={match.id} p="4">
+                          <Box className="panel-card match-card" key={match.id} p="4">
                             <Flex align="center" justify="space-between" wrap="wrap" gap="3">
                               <Box>
                                 <Heading as="h3" size="md">{match.name}</Heading>
-                                <Text fontFamily="mono" fontSize="xs">{match.mapName} · {match.teamAName} × {match.teamBName} · MR{match.maxRounds}</Text>
+                                <Text fontFamily="mono" fontSize="xs">
+                                  {match.format.toUpperCase()} · {match.teamAName} × {match.teamBName} · MR{match.maxRounds}
+                                </Text>
                                 <Text fontSize="sm" mt="2">
                                   {match.players && match.players.length > 0
                                     ? `Jogadores: ${match.players.map((p) => p.displayName).join(", ")}`
@@ -321,14 +417,32 @@ export default function App() {
                                 </Text>
                               </Box>
                               <HStack gap="2">
-                                <Badge className={`match-status is-${match.status}`}>{match.status}</Badge>
-                                {!isMember ? (
-                                  <Button className="primary-button" onClick={() => void handleJoin(match.id)} size="xs">ENTRAR</Button>
-                                ) : (
-                                  <Button className="ghost-button" onClick={() => void handleInvite(match.id)} size="xs">CONVIDAR</Button>
-                                )}
+                                <Badge className={`match-status is-${match.phase}`}>{phaseLabel[match.phase]}</Badge>
+                                {match.phase === "lobby" && !isMember ? (
+                                  <Button className="primary-button" onClick={() => void handleAction(() => joinMatch(match.id), "Você entrou na partida.")} size="xs">ENTRAR</Button>
+                                ) : null}
+                                {match.phase === "lobby" && isMember ? (
+                                  <Button
+                                    className="ghost-button"
+                                    onClick={() => {
+                                      if (!STEAM_ID64.test(inviteSteamId)) { setFeedback("Informe um SteamID64 válido para convidar."); return; }
+                                      void handleAction(() => inviteToMatch(match.id, inviteSteamId), "Convite enviado.");
+                                    }}
+                                    size="xs"
+                                  >CONVIDAR</Button>
+                                ) : null}
+                                {match.phase === "lobby" && isCreator ? (
+                                  <Button
+                                    className="primary-button"
+                                    onClick={() => void handleAction(() => startVeto(match.id, STEAM_ID64.test(captainSteamId) ? captainSteamId : undefined), "Veto iniciado.")}
+                                    size="xs"
+                                  >INICIAR VETO</Button>
+                                ) : null}
                               </HStack>
                             </Flex>
+                            {match.phase === "veto" || match.phase === "live" ? (
+                              <VetoBoard match={match} onAction={(action) => void handleAction(() => sendVeto(match.id, action), "Veto registrado.")} user={user} />
+                            ) : null}
                           </Box>
                         );
                       })}

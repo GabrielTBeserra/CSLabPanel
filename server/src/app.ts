@@ -42,8 +42,48 @@ const matchSchema = {
     teamAName: { type: "string", minLength: 1, maxLength: 64 },
     teamBName: { type: "string", minLength: 1, maxLength: 64 },
     maxRounds: { type: "integer", minimum: 1, maximum: 30 },
+    format: { type: "string", enum: ["bo1", "bo3"] },
+    mapPool: { type: "array", minItems: 3, maxItems: 9, uniqueItems: true, items: { type: "string", pattern: "^de_[a-z0-9_]+$" } },
   },
 } as const;
+
+interface VetoStep {
+  action: "ban" | "pick";
+  team: "a" | "b";
+}
+
+const VETO_STEPS: Record<"bo1" | "bo3", VetoStep[]> = {
+  bo1: [
+    { action: "ban", team: "a" }, { action: "ban", team: "b" },
+    { action: "ban", team: "a" }, { action: "ban", team: "b" },
+    { action: "ban", team: "a" }, { action: "ban", team: "b" },
+  ],
+  bo3: [
+    { action: "ban", team: "a" }, { action: "ban", team: "b" },
+    { action: "pick", team: "a" }, { action: "pick", team: "b" },
+    { action: "ban", team: "a" }, { action: "ban", team: "b" },
+  ],
+};
+
+const STEAM_PROFILE_XML = "https://steamcommunity.com/profiles";
+const XML_TAG = (tag: string) => new RegExp(`<${tag}>(?:<!\\[CDATA\\[)?([^<]+?)(?:\\]\\]>)?</${tag}>`);
+
+const fetchSteamProfile = async (steamId: string): Promise<{ name: string; avatar: string } | null> => {
+  try {
+    const response = await fetch(`${STEAM_PROFILE_XML}/${steamId}/?xml=1`, {
+      signal: AbortSignal.timeout(6000),
+      headers: { "User-Agent": "cshome-panel/1.0" },
+    });
+    if (!response.ok) return null;
+    const xml = await response.text();
+    const name = XML_TAG("steamID").exec(xml)?.[1]?.trim();
+    const avatar = XML_TAG("avatarFull").exec(xml)?.[1]?.trim()
+      ?? XML_TAG("avatarMedium").exec(xml)?.[1]?.trim();
+    return name ? { name: name.slice(0, 64), avatar: avatar ?? "" } : null;
+  } catch {
+    return null;
+  }
+};
 
 const SESSION_COOKIE = "cshome_session";
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -157,6 +197,9 @@ export const buildServer = ({ pluginToken, adminToken, webOrigin, database = nul
     }
 
     const user = await database.upsertSteamUser(steamId);
+    void fetchSteamProfile(steamId)
+      .then((profile) => (profile ? database.updateUserProfile(steamId, profile.name, profile.avatar || null) : undefined))
+      .catch(() => undefined);
     const token = randomBytes(32).toString("base64url");
     await database.createSession(user.id, hashSessionToken(token), new Date(Date.now() + SESSION_TTL_MS));
     reply.header(
@@ -192,7 +235,8 @@ export const buildServer = ({ pluginToken, adminToken, webOrigin, database = nul
     if (!database) return reply.code(503).send(databaseUnavailable);
     const matches = await database.listMatches();
     const players = await Promise.all(matches.map((m) => database.listMatchPlayers(m.id)));
-    return { matches: matches.map((m, i) => ({ ...m, players: players[i] })) };
+    const vetoes = await Promise.all(matches.map((m) => database.listVetoes(m.id)));
+    return { matches: matches.map((m, i) => ({ ...m, players: players[i], vetoes: vetoes[i] })) };
   });
 
   app.post("/api/matches", { onRequest: requireUser, schema: { body: matchSchema } }, async (request, reply) => {
@@ -207,6 +251,84 @@ export const buildServer = ({ pluginToken, adminToken, webOrigin, database = nul
     const { id } = request.params as { id: string };
     await database.joinMatch(id, request.currentUser!.id);
     return { joined: true, matchId: id };
+  });
+
+  app.post("/api/matches/:id/veto/start", { onRequest: requireUser }, async (request, reply) => {
+    if (!database) return reply.code(503).send(databaseUnavailable);
+    const { id } = request.params as { id: string };
+    const match = await database.getMatchById(id);
+    if (!match) return reply.code(404).send(invalidRequest);
+    if (match.createdBy !== request.currentUser!.id) return reply.code(403).send(unauthorized);
+    if (match.phase !== "lobby") return reply.code(409).send({ error: { code: "INVALID_PHASE", message: "Veto already started" } });
+    const pool = match.mapPool.length >= 3 ? match.mapPool : ["de_mirage", "de_inferno", "de_nuke", "de_ancient", "de_anubis", "de_vertigo", "de_overpass"];
+    const { captainBSteamId } = (request.body ?? {}) as { captainBSteamId?: string };
+    const players = await database.listMatchPlayers(id);
+    let captainBId: string | null = null;
+    if (captainBSteamId) {
+      const captainB = await database.findUserBySteamId(captainBSteamId);
+      if (!captainB || !players.some((p) => p.userId === captainB.id)) {
+        return reply.code(400).send({ error: { code: "CAPTAIN_NOT_IN_MATCH", message: "Captain must be a match player" } });
+      }
+      captainBId = captainB.id;
+    } else {
+      captainBId = players.find((p) => p.userId !== request.currentUser!.id)?.userId ?? null;
+    }
+    await database.setMatchCaptains(id, request.currentUser!.id, captainBId);
+    await database.setMatchPhase(id, "veto");
+    return { started: true, matchId: id, mapPool: pool, captainAId: request.currentUser!.id, captainBId };
+  });
+
+  app.post("/api/matches/:id/veto", { onRequest: requireUser }, async (request, reply) => {
+    if (!database) return reply.code(503).send(databaseUnavailable);
+    const { id } = request.params as { id: string };
+    const match = await database.getMatchById(id);
+    if (!match || match.phase !== "veto") {
+      return reply.code(409).send({ error: { code: "INVALID_PHASE", message: "Match is not in veto phase" } });
+    }
+    const user = request.currentUser!;
+    const vetoes = await database.listVetoes(id);
+    const pool = match.mapPool.length >= 3 ? match.mapPool : ["de_mirage", "de_inferno", "de_nuke", "de_ancient", "de_anubis", "de_vertigo", "de_overpass"];
+    const used = new Set(vetoes.filter((v) => v.mapName).map((v) => v.mapName));
+    const remaining = pool.filter((m) => !used.has(m));
+    const steps = VETO_STEPS[match.format];
+    const body = request.body as { action?: string; mapName?: string; side?: string };
+
+    if (vetoes.length >= steps.length) {
+      if (body.action !== "side" || (body.side !== "a" && body.side !== "b")) {
+        return reply.code(400).send({ error: { code: "SIDE_REQUIRED", message: "Choose side 'a' or 'b'" } });
+      }
+      const sideCaptain = match.captainBId ?? match.captainAId;
+      if (user.id !== sideCaptain) return reply.code(403).send(unauthorized);
+      await database.insertVeto({
+        matchId: id, seq: vetoes.length + 1, action: "side", mapName: null,
+        team: body.side as "a" | "b", actorSteamId: user.steamId, actorName: user.displayName,
+      });
+      await database.setMatchSide(id, body.side as "a" | "b");
+      await database.setMatchPhase(id, "live");
+      return { finished: true, side: body.side, remaining };
+    }
+
+    const step = steps[vetoes.length]!;
+    const expectedCaptain = step.team === "a" ? match.captainAId : match.captainBId;
+    if (!expectedCaptain || user.id !== expectedCaptain) {
+      return reply.code(403).send({ error: { code: "NOT_YOUR_TURN", message: "It is the other captain's turn" } });
+    }
+    if (body.action !== step.action || !body.mapName || !remaining.includes(body.mapName)) {
+      return reply.code(400).send({ error: { code: "INVALID_VETO", message: `Expected ${step.action} on a remaining map` } });
+    }
+    await database.insertVeto({
+      matchId: id, seq: vetoes.length + 1, action: step.action, mapName: body.mapName,
+      team: step.team, actorSteamId: user.steamId, actorName: user.displayName,
+    });
+
+    const nowRemaining = remaining.filter((m) => m !== body.mapName);
+    if (vetoes.length + 1 === steps.length && nowRemaining.length === 1) {
+      await database.insertVeto({
+        matchId: id, seq: vetoes.length + 2, action: "pick", mapName: nowRemaining[0]!,
+        team: null, actorSteamId: "system", actorName: "Decider",
+      });
+    }
+    return { accepted: true, next: vetoes.length + 2 <= steps.length ? steps[vetoes.length + 1] ?? "side" : "side", remaining: nowRemaining };
   });
 
   app.post(

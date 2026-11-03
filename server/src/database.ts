@@ -1,6 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import { Pool, type PoolConfig, type QueryResultRow } from "pg";
 
+export type MatchFormat = "bo1" | "bo3";
+export type MatchPhase = "lobby" | "veto" | "live" | "finished";
+
 export interface MatchRecord {
   id: string;
   name: string;
@@ -8,6 +11,12 @@ export interface MatchRecord {
   teamAName: string;
   teamBName: string;
   maxRounds: number;
+  format: MatchFormat;
+  mapPool: string[];
+  phase: MatchPhase;
+  captainAId: string | null;
+  captainBId: string | null;
+  sideChoice: "a" | "b" | null;
   status: "scheduled" | "live" | "finished" | "cancelled";
   createdBy: string | null;
   createdAt: string;
@@ -20,13 +29,28 @@ export interface CreateMatchInput {
   teamAName: string;
   teamBName: string;
   maxRounds: number;
+  format?: MatchFormat;
+  mapPool?: string[];
   createdBy?: string | null;
+}
+
+export interface VetoRecord {
+  id: string;
+  matchId: string;
+  seq: number;
+  action: "ban" | "pick" | "side";
+  mapName: string | null;
+  team: "a" | "b" | null;
+  actorSteamId: string;
+  actorName: string;
+  createdAt: string;
 }
 
 export interface UserRecord {
   id: string;
   steamId: string;
   displayName: string;
+  avatarUrl: string | null;
   role: "player" | "admin";
   createdAt: string;
   lastSeenAt: string;
@@ -71,6 +95,14 @@ export interface MatchStore {
   listMatches(): Promise<MatchRecord[]>;
   createMatch(input: CreateMatchInput): Promise<MatchRecord>;
   upsertSteamUser(steamId: string): Promise<UserRecord>;
+  updateUserProfile(steamId: string, displayName: string, avatarUrl: string | null): Promise<void>;
+  findUserBySteamId(steamId: string): Promise<UserRecord | null>;
+  getMatchById(matchId: string): Promise<MatchRecord | null>;
+  setMatchPhase(matchId: string, phase: MatchPhase): Promise<void>;
+  setMatchCaptains(matchId: string, captainAId: string | null, captainBId: string | null): Promise<void>;
+  setMatchSide(matchId: string, side: "a" | "b"): Promise<void>;
+  insertVeto(veto: Omit<VetoRecord, "id" | "createdAt">): Promise<void>;
+  listVetoes(matchId: string): Promise<VetoRecord[]>;
   createSession(userId: string, tokenHash: string, expiresAt: Date): Promise<void>;
   findSessionUser(tokenHash: string): Promise<SessionUser | null>;
   touchSession(sessionId: string): Promise<void>;
@@ -91,13 +123,20 @@ const iso = (v: unknown) => new Date(v as string | Date).toISOString();
 
 const toMatch = (r: Row): MatchRecord => ({
   id: r.id, name: r.name, mapName: r.map_name, teamAName: r.team_a_name, teamBName: r.team_b_name,
-  maxRounds: r.max_rounds, status: r.status, createdBy: r.created_by ?? null,
+  maxRounds: r.max_rounds, format: r.format ?? "bo1", mapPool: r.map_pool ?? [], phase: r.phase ?? "lobby",
+  captainAId: r.captain_a_id ?? null, captainBId: r.captain_b_id ?? null, sideChoice: r.side_choice ?? null,
+  status: r.status, createdBy: r.created_by ?? null,
   createdAt: iso(r.created_at), updatedAt: iso(r.updated_at),
 });
 
 const toUser = (r: Row): UserRecord => ({
-  id: r.id, steamId: r.steam_id, displayName: r.display_name, role: r.role,
+  id: r.id, steamId: r.steam_id, displayName: r.display_name, avatarUrl: r.avatar_url ?? null, role: r.role,
   createdAt: iso(r.created_at), lastSeenAt: iso(r.last_seen_at),
+});
+
+const toVeto = (r: Row): VetoRecord => ({
+  id: r.id, matchId: r.match_id, seq: r.seq, action: r.action, mapName: r.map_name ?? null, team: r.team ?? null,
+  actorSteamId: r.actor_steam_id, actorName: r.actor_name, createdAt: iso(r.created_at),
 });
 
 export class PostgresDatabase implements MatchStore {
@@ -120,6 +159,7 @@ export class PostgresDatabase implements MatchStore {
         created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
         last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now()
       );
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT;
       CREATE TABLE IF NOT EXISTS sessions (
         id UUID PRIMARY KEY,
         token_hash TEXT NOT NULL UNIQUE,
@@ -142,6 +182,23 @@ export class PostgresDatabase implements MatchStore {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
       );
       ALTER TABLE matches ADD COLUMN IF NOT EXISTS created_by UUID REFERENCES users(id) ON DELETE SET NULL;
+      ALTER TABLE matches ADD COLUMN IF NOT EXISTS format TEXT NOT NULL DEFAULT 'bo1' CHECK (format IN ('bo1', 'bo3'));
+      ALTER TABLE matches ADD COLUMN IF NOT EXISTS map_pool TEXT[] NOT NULL DEFAULT '{}';
+      ALTER TABLE matches ADD COLUMN IF NOT EXISTS phase TEXT NOT NULL DEFAULT 'lobby' CHECK (phase IN ('lobby', 'veto', 'live', 'finished'));
+      ALTER TABLE matches ADD COLUMN IF NOT EXISTS captain_a_id UUID REFERENCES users(id) ON DELETE SET NULL;
+      ALTER TABLE matches ADD COLUMN IF NOT EXISTS captain_b_id UUID REFERENCES users(id) ON DELETE SET NULL;
+      ALTER TABLE matches ADD COLUMN IF NOT EXISTS side_choice TEXT CHECK (side_choice IN ('a', 'b'));
+      CREATE TABLE IF NOT EXISTS match_vetoes (
+        id UUID PRIMARY KEY,
+        match_id UUID NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
+        seq INTEGER NOT NULL,
+        action TEXT NOT NULL CHECK (action IN ('ban', 'pick', 'side')),
+        map_name TEXT,
+        team TEXT CHECK (team IN ('a', 'b')),
+        actor_steam_id TEXT NOT NULL,
+        actor_name TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
       CREATE TABLE IF NOT EXISTS match_players (
         match_id UUID NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
         user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -173,11 +230,54 @@ export class PostgresDatabase implements MatchStore {
 
   async createMatch(input: CreateMatchInput): Promise<MatchRecord> {
     const r = await this.pool.query<Row>(
-      `INSERT INTO matches (id, name, map_name, team_a_name, team_b_name, max_rounds, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-      [randomUUID(), input.name, input.mapName, input.teamAName, input.teamBName, input.maxRounds, input.createdBy ?? null],
+      `INSERT INTO matches (id, name, map_name, team_a_name, team_b_name, max_rounds, format, map_pool, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+      [randomUUID(), input.name, input.mapName, input.teamAName, input.teamBName, input.maxRounds,
+       input.format ?? "bo1", input.mapPool ?? [], input.createdBy ?? null],
     );
     return toMatch(r.rows[0]!);
+  }
+
+  async getMatchById(matchId: string): Promise<MatchRecord | null> {
+    const r = await this.pool.query<Row>(`SELECT * FROM matches WHERE id = $1`, [matchId]);
+    return r.rows[0] ? toMatch(r.rows[0]) : null;
+  }
+
+  async setMatchPhase(matchId: string, phase: MatchPhase): Promise<void> {
+    await this.pool.query(`UPDATE matches SET phase = $2, updated_at = now() WHERE id = $1`, [matchId, phase]);
+  }
+
+  async setMatchCaptains(matchId: string, captainAId: string | null, captainBId: string | null): Promise<void> {
+    await this.pool.query(`UPDATE matches SET captain_a_id = $2, captain_b_id = $3, updated_at = now() WHERE id = $1`, [matchId, captainAId, captainBId]);
+  }
+
+  async setMatchSide(matchId: string, side: "a" | "b"): Promise<void> {
+    await this.pool.query(`UPDATE matches SET side_choice = $2, updated_at = now() WHERE id = $1`, [matchId, side]);
+  }
+
+  async insertVeto(veto: Omit<VetoRecord, "id" | "createdAt">): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO match_vetoes (id, match_id, seq, action, map_name, team, actor_steam_id, actor_name)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [randomUUID(), veto.matchId, veto.seq, veto.action, veto.mapName, veto.team, veto.actorSteamId, veto.actorName],
+    );
+  }
+
+  async listVetoes(matchId: string): Promise<VetoRecord[]> {
+    const r = await this.pool.query<Row>(`SELECT * FROM match_vetoes WHERE match_id = $1 ORDER BY seq`, [matchId]);
+    return r.rows.map(toVeto);
+  }
+
+  async findUserBySteamId(steamId: string): Promise<UserRecord | null> {
+    const r = await this.pool.query<Row>(`SELECT * FROM users WHERE steam_id = $1`, [steamId]);
+    return r.rows[0] ? toUser(r.rows[0]) : null;
+  }
+
+  async updateUserProfile(steamId: string, displayName: string, avatarUrl: string | null): Promise<void> {
+    await this.pool.query(
+      `UPDATE users SET display_name = $2, avatar_url = $3, last_seen_at = now() WHERE steam_id = $1`,
+      [steamId, displayName, avatarUrl],
+    );
   }
 
   async upsertSteamUser(steamId: string): Promise<UserRecord> {
