@@ -69,12 +69,18 @@ export interface MatchRecord {
   updatedAt: string;
   matchNumber: number;
   knifeRound: boolean;
+  preset: MatchPreset;
+  overtime: boolean;
+  overtimeRounds: number;
+  playout: boolean;
   serverState: ServerState;
   serverError: string | null;
   live: LiveState;
   players?: MatchPlayer[];
   vetoes?: VetoRecord[];
 }
+
+export type MatchPreset = "official" | "official_noknife" | "quick" | "scrim" | "custom";
 
 export type ServerState = "idle" | "loading" | "warmup" | "live" | "paused" | "map_end" | "finished" | "error";
 
@@ -139,6 +145,10 @@ export interface CreateMatchInput {
   format: MatchFormat;
   mapPool: string[];
   knifeRound: boolean;
+  preset: MatchPreset;
+  overtime: boolean;
+  overtimeRounds: number;
+  playout: boolean;
 }
 
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || "/api").replace(/\/+$/, "");

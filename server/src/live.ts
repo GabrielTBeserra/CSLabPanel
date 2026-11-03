@@ -41,6 +41,10 @@ export const buildMatchzyConfig = (
       matchzy_remote_log_header_key: "Authorization",
       matchzy_remote_log_header_value: `Bearer ${pluginToken}`,
       mp_maxrounds: String(match.maxRounds),
+      mp_overtime_enable: match.overtime ? "1" : "0",
+      mp_overtime_maxrounds: String(match.overtimeRounds),
+      mp_overtime_startmoney: "12500",
+      matchzy_playout_enabled_default: match.playout ? "true" : "false",
     },
   };
 };

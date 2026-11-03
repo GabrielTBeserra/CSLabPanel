@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { vetoSteps } from "../src/app.js";
+import { resolveMatchInput, vetoSteps } from "../src/app.js";
 import type { MatchPlayerRecord, MatchRecord, VetoRecord } from "../src/database.js";
 import { applyMatchzyEvent, buildMatchzyConfig } from "../src/live.js";
 
@@ -9,6 +9,7 @@ const match = {
   format: "bo1", mapPool: [], phase: "live", captainAId: null, captainBId: null, sideChoice: "b",
   status: "scheduled", createdBy: null, createdAt: "", updatedAt: "", matchNumber: 42, knifeRound: false,
   serverState: "idle", serverError: null, live: {},
+  preset: "custom", overtime: true, overtimeRounds: 6, playout: false,
 } as MatchRecord;
 
 const player = (steamId: string, team: "a" | "b"): MatchPlayerRecord => ({
@@ -63,6 +64,24 @@ describe("MatchZy integration", () => {
     assert.equal(r.state, "paused");
     r = applyMatchzyEvent(r.live, r.state, { event: "series_end", team1_series_score: 1, team2_series_score: 0, winner: { team: "team1" } }, team);
     assert.deepEqual([r.state, r.live.winner, r.seriesFinished], ["finished", "a", true]);
+  });
+
+  it("enforces preset rules on the server and keeps custom values", () => {
+    const base = { name: "x", mapName: "de_mirage", teamAName: "A", teamBName: "B", maxRounds: 30, knifeRound: false };
+    const official = resolveMatchInput({ ...base, preset: "official", overtime: false });
+    assert.deepEqual(
+      [official.maxRounds, official.knifeRound, official.overtime, official.overtimeRounds, official.playout],
+      [24, true, true, 6, false],
+    );
+    assert.equal(resolveMatchInput({ ...base, preset: "quick" }).maxRounds, 16);
+    assert.equal(resolveMatchInput({ ...base, preset: "scrim" }).playout, true);
+    assert.equal(resolveMatchInput({ ...base, preset: "custom" }).maxRounds, 30);
+  });
+
+  it("sends overtime and playout cvars to MatchZy", () => {
+    const config = buildMatchzyConfig({ ...match, overtime: false, playout: true }, [], [], { eventsUrl: "u", pluginToken: "t" });
+    assert.equal(config.cvars.mp_overtime_enable, "0");
+    assert.equal(config.cvars.matchzy_playout_enabled_default, "true");
   });
 
   it("generates veto steps that always leave exactly one decider", () => {

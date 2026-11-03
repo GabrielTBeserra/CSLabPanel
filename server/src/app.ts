@@ -60,6 +60,10 @@ const matchSchema = {
     format: { type: "string", enum: ["bo1", "bo3"] },
     mapPool: { type: "array", minItems: 3, maxItems: 10, uniqueItems: true, items: { type: "string", pattern: "^de_[a-z0-9_]+$" } },
     knifeRound: { type: "boolean" },
+    preset: { type: "string", enum: ["official", "official_noknife", "quick", "scrim", "custom"] },
+    overtime: { type: "boolean" },
+    overtimeRounds: { type: "integer", enum: [2, 4, 6, 8, 10] },
+    playout: { type: "boolean" },
   },
 } as const;
 
@@ -78,6 +82,20 @@ export const vetoSteps = (format: "bo1" | "bo3", poolSize: number): VetoStep[] =
     ...Array<VetoStep["action"]>(bans - leadingBans).fill("ban"),
   ];
   return actions.map((action, i) => ({ action, team: i % 2 === 0 ? "a" : "b" }));
+};
+
+type PresetRules = Required<Pick<CreateMatchInput, "maxRounds" | "knifeRound" | "overtime" | "overtimeRounds" | "playout">>;
+
+export const MATCH_PRESETS: Record<Exclude<NonNullable<CreateMatchInput["preset"]>, "custom">, PresetRules> = {
+  official: { maxRounds: 24, knifeRound: true, overtime: true, overtimeRounds: 6, playout: false },
+  official_noknife: { maxRounds: 24, knifeRound: false, overtime: true, overtimeRounds: 6, playout: false },
+  quick: { maxRounds: 16, knifeRound: false, overtime: false, overtimeRounds: 6, playout: false },
+  scrim: { maxRounds: 24, knifeRound: false, overtime: false, overtimeRounds: 6, playout: true },
+};
+
+export const resolveMatchInput = (input: CreateMatchInput): CreateMatchInput => {
+  const preset = input.preset ?? "custom";
+  return preset === "custom" ? { ...input, preset } : { ...input, ...MATCH_PRESETS[preset], preset };
 };
 
 const DEFAULT_POOL = ["de_mirage", "de_inferno", "de_nuke", "de_ancient", "de_anubis", "de_vertigo", "de_overpass"];
@@ -315,7 +333,7 @@ export const buildServer = ({
 
   app.post("/api/matches", { onRequest: requireUser, schema: { body: matchSchema } }, async (request, reply) => {
     if (!database) return reply.code(503).send(databaseUnavailable);
-    const match = await database.createMatch({ ...(request.body as CreateMatchInput), createdBy: request.currentUser!.id });
+    const match = await database.createMatch({ ...resolveMatchInput(request.body as CreateMatchInput), createdBy: request.currentUser!.id });
     await database.joinMatch(match.id, request.currentUser!.id);
     publishMatch(match.id);
     return reply.code(201).send({ match });

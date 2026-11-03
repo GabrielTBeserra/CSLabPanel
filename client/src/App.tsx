@@ -17,6 +17,7 @@ import Logo from "./Logo";
 import MatchRoom from "./MatchRoom";
 import { DEFAULT_POOL, MAPS, mapIcon, mapName, mapThumb } from "./maps";
 import { serverStateLabel } from "./labels";
+import { PRESETS, describeRules, presetById } from "./presets";
 import { useRealtime, useRealtimeStatus } from "./realtime";
 import { isMuted, onMutedChange, play, setMuted } from "./sound";
 import {
@@ -37,6 +38,7 @@ import {
   startVeto,
   type InviteRecord,
   type MatchFormat,
+  type MatchPreset,
   type MatchRecord,
   type PresenceEntry,
   type UserRecord,
@@ -50,10 +52,10 @@ const initialForm = {
   name: "",
   teamAName: "Time A",
   teamBName: "Time B",
-  maxRounds: 24,
   format: "bo1" as MatchFormat,
   mapPool: [...DEFAULT_POOL],
-  knifeRound: true,
+  preset: "official" as MatchPreset,
+  ...presetById("official").rules!,
 };
 
 const phaseLabel: Record<string, string> = {
@@ -281,6 +283,11 @@ export default function App() {
     return () => clearInterval(timer);
   }, [user, refresh]);
 
+  const selectPreset = (id: MatchPreset) => {
+    const rules = presetById(id).rules;
+    setForm((current) => ({ ...current, preset: id, ...(rules ?? {}) }));
+  };
+
   const togglePoolMap = (map: string) => {
     setForm((current) => ({
       ...current,
@@ -304,6 +311,10 @@ export default function App() {
         format: form.format,
         mapPool: form.mapPool,
         knifeRound: form.knifeRound,
+        preset: form.preset,
+        overtime: form.overtime,
+        overtimeRounds: form.overtimeRounds,
+        playout: form.playout,
       });
       setForm(initialForm);
       setFeedback("Partida criada com sucesso.");
@@ -464,6 +475,63 @@ export default function App() {
                       </select>
                     </label>
                     <Box className="field">
+                      <span>Modo de jogo</span>
+                      <Grid className="preset-grid" gap="2" mt="1">
+                        {PRESETS.map((preset) => (
+                          <button
+                            aria-pressed={form.preset === preset.id}
+                            className={`preset-card${form.preset === preset.id ? " is-active" : ""}`}
+                            key={preset.id}
+                            onClick={() => { play("click"); selectPreset(preset.id); }}
+                            type="button"
+                          >
+                            <span className="preset-tag">{preset.tag}</span>
+                            <strong>{preset.title}</strong>
+                            <small>{preset.description}</small>
+                          </button>
+                        ))}
+                      </Grid>
+                    </Box>
+                    {form.preset === "custom" ? (
+                      <Box className="custom-rules rise-in">
+                        <Grid gap="3" templateColumns="1fr 1fr">
+                          <label className="field">
+                            <span>Rounds (regulamentar)</span>
+                            <select onChange={(e) => setForm({ ...form, maxRounds: Number(e.target.value) })} value={form.maxRounds}>
+                              {[16, 24, 30].map((n) => <option key={n} value={n}>MR{n / 2} ({n})</option>)}
+                            </select>
+                          </label>
+                          <label className="field">
+                            <span>Overtime</span>
+                            <select
+                              onChange={(e) => {
+                                const value = Number(e.target.value);
+                                setForm({ ...form, overtime: value > 0, overtimeRounds: value > 0 ? value : form.overtimeRounds });
+                              }}
+                              value={form.overtime ? form.overtimeRounds : 0}
+                            >
+                              <option value={0}>Sem overtime</option>
+                              {[6, 10].map((n) => <option key={n} value={n}>MR{n / 2} ({n})</option>)}
+                            </select>
+                          </label>
+                        </Grid>
+                        <label className="toggle-field">
+                          <input checked={form.knifeRound} onChange={(e) => setForm({ ...form, knifeRound: e.target.checked })} type="checkbox" />
+                          <span>
+                            <strong>Round de faca</strong>
+                            <small>{form.knifeRound ? "Quem vencer a faca escolhe o lado." : "O capitão B escolhe o lado no veto."}</small>
+                          </span>
+                        </label>
+                        <label className="toggle-field">
+                          <input checked={form.playout} onChange={(e) => setForm({ ...form, playout: e.target.checked })} type="checkbox" />
+                          <span>
+                            <strong>Jogar até o fim</strong>
+                            <small>{form.playout ? "Todos os rounds são jogados, mesmo com vencedor definido." : "A partida acaba quando um time vence."}</small>
+                          </span>
+                        </label>
+                      </Box>
+                    ) : null}
+                    <Box className="field">
                       <span>Pool de mapas ({form.mapPool.length})</span>
                       <Grid className="map-grid is-compact" gap="2" mt="1">
                         {MAPS.map((map) => (
@@ -482,14 +550,9 @@ export default function App() {
                       <label className="field"><span>Time A</span><input required maxLength={64} onChange={(e) => setForm({ ...form, teamAName: e.target.value })} value={form.teamAName} /></label>
                       <label className="field"><span>Time B</span><input required maxLength={64} onChange={(e) => setForm({ ...form, teamBName: e.target.value })} value={form.teamBName} /></label>
                     </Grid>
-                    <label className="field"><span>Máximo de rounds</span><input min="1" max="30" onChange={(e) => setForm({ ...form, maxRounds: Number(e.target.value) })} type="number" value={form.maxRounds} /></label>
-                    <label className="toggle-field">
-                      <input checked={form.knifeRound} onChange={(e) => setForm({ ...form, knifeRound: e.target.checked })} type="checkbox" />
-                      <span>
-                        <strong>Round de faca</strong>
-                        <small>{form.knifeRound ? "Quem vencer a faca escolhe o lado." : "O capitão B escolhe o lado no veto."}</small>
-                      </span>
-                    </label>
+                    <Text className="rules-summary" fontFamily="mono" fontSize="xs" mt="3">
+                      {(form.format === "bo3" ? "MD3" : "MD1")} · {describeRules(form)}
+                    </Text>
                     <Button className="primary-button" disabled={isBusy || form.mapPool.length < 3} mt="2" type="submit" w="full">
                       {isBusy ? "CRIANDO..." : "CRIAR PARTIDA"}
                     </Button>
@@ -537,7 +600,7 @@ export default function App() {
                               <Box>
                                 <Heading as="h3" size="md">{match.name}</Heading>
                                 <Text fontFamily="mono" fontSize="xs">
-                                  {match.format === "bo3" ? "MD3" : "MD1"} · {match.teamAName} × {match.teamBName} · MR{match.maxRounds}
+                                  {match.format === "bo3" ? "MD3" : "MD1"} · {presetById(match.preset).title.toUpperCase()} · {describeRules(match)}
                                 </Text>
                                 <Text fontSize="sm" mt="2">
                                   {match.players && match.players.length > 0

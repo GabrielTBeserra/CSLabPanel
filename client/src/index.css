@@ -642,6 +642,57 @@ a:focus-visible {
   border-left-color: var(--chakra-colors-danger);
   background: rgba(255, 77, 94, 0.1);
 }
+.preset-grid {
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+}
+.preset-card {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid var(--chakra-colors-line);
+  border-radius: 10px;
+  background: rgba(8, 12, 17, 0.6);
+  color: var(--chakra-colors-text);
+  cursor: pointer;
+  text-align: left;
+  text-transform: none;
+  letter-spacing: normal;
+  font-family: var(--chakra-fonts-body);
+  transition: border-color 160ms ease, transform 160ms ease, background 160ms ease;
+}
+.preset-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(255, 159, 28, 0.5);
+}
+.preset-card strong {
+  font-size: 0.95rem;
+}
+.preset-card small {
+  color: var(--chakra-colors-muted);
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
+.preset-card.is-active {
+  border-color: var(--chakra-colors-signal);
+  background: linear-gradient(160deg, rgba(255, 159, 28, 0.18), rgba(8, 12, 17, 0.7));
+  box-shadow: 0 0 0 1px rgba(255, 159, 28, 0.4), 0 10px 24px -14px rgba(255, 159, 28, 0.8);
+}
+.preset-tag {
+  color: var(--chakra-colors-signal);
+  font-family: var(--chakra-fonts-mono);
+  font-size: 0.58rem;
+  letter-spacing: 0.08em;
+}
+.custom-rules {
+  margin-top: 0.5rem;
+  padding: 0.25rem 0.9rem 0.9rem;
+  border: 1px dashed var(--chakra-colors-line);
+  border-radius: 10px;
+}
+.rules-summary {
+  color: var(--chakra-colors-signal);
+  letter-spacing: 0.06em;
+}
 .toggle-field {
   display: flex;
   align-items: center;

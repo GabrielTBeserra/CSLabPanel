@@ -23,10 +23,16 @@ export interface MatchRecord {
   updatedAt: string;
   matchNumber: number;
   knifeRound: boolean;
+  preset: MatchPreset;
+  overtime: boolean;
+  overtimeRounds: number;
+  playout: boolean;
   serverState: ServerState;
   serverError: string | null;
   live: LiveState;
 }
+
+export type MatchPreset = "official" | "official_noknife" | "quick" | "scrim" | "custom";
 
 export type ServerState = "idle" | "loading" | "warmup" | "live" | "paused" | "map_end" | "finished" | "error";
 
@@ -77,6 +83,10 @@ export interface CreateMatchInput {
   format?: MatchFormat;
   mapPool?: string[];
   knifeRound?: boolean;
+  preset?: MatchPreset;
+  overtime?: boolean;
+  overtimeRounds?: number;
+  playout?: boolean;
   createdBy?: string | null;
 }
 
@@ -186,6 +196,7 @@ const toMatch = (r: Row): MatchRecord => ({
   status: r.status, createdBy: r.created_by ?? null,
   createdAt: iso(r.created_at), updatedAt: iso(r.updated_at),
   matchNumber: Number(r.match_number ?? 0), knifeRound: r.knife_round ?? true,
+  preset: r.preset ?? "official", overtime: r.overtime ?? true, overtimeRounds: r.overtime_rounds ?? 6, playout: r.playout ?? false,
   serverState: r.server_state ?? "idle", serverError: r.server_error ?? null, live: r.live ?? {},
 });
 
@@ -256,6 +267,10 @@ export class PostgresDatabase implements MatchStore {
       ALTER TABLE matches ADD COLUMN IF NOT EXISTS server_state TEXT NOT NULL DEFAULT 'idle';
       ALTER TABLE matches ADD COLUMN IF NOT EXISTS server_error TEXT;
       ALTER TABLE matches ADD COLUMN IF NOT EXISTS live JSONB NOT NULL DEFAULT '{}'::jsonb;
+      ALTER TABLE matches ADD COLUMN IF NOT EXISTS preset TEXT NOT NULL DEFAULT 'official';
+      ALTER TABLE matches ADD COLUMN IF NOT EXISTS overtime BOOLEAN NOT NULL DEFAULT true;
+      ALTER TABLE matches ADD COLUMN IF NOT EXISTS overtime_rounds INTEGER NOT NULL DEFAULT 6;
+      ALTER TABLE matches ADD COLUMN IF NOT EXISTS playout BOOLEAN NOT NULL DEFAULT false;
       CREATE TABLE IF NOT EXISTS match_vetoes (
         id UUID PRIMARY KEY,
         match_id UUID NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
@@ -298,10 +313,12 @@ export class PostgresDatabase implements MatchStore {
 
   async createMatch(input: CreateMatchInput): Promise<MatchRecord> {
     const r = await this.pool.query<Row>(
-      `INSERT INTO matches (id, name, map_name, team_a_name, team_b_name, max_rounds, format, map_pool, knife_round, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+      `INSERT INTO matches (id, name, map_name, team_a_name, team_b_name, max_rounds, format, map_pool, knife_round,
+         preset, overtime, overtime_rounds, playout, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
       [randomUUID(), input.name, input.mapName, input.teamAName, input.teamBName, input.maxRounds,
-       input.format ?? "bo1", input.mapPool ?? [], input.knifeRound ?? true, input.createdBy ?? null],
+       input.format ?? "bo1", input.mapPool ?? [], input.knifeRound ?? true,
+       input.preset ?? "custom", input.overtime ?? true, input.overtimeRounds ?? 6, input.playout ?? false, input.createdBy ?? null],
     );
     return toMatch(r.rows[0]!);
   }

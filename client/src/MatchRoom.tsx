@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Badge, Box, Button, Flex, Heading, HStack, Image, Stack, Text } from "@chakra-ui/react";
 import LivePanel from "./LivePanel";
 import { mapName, mapThumb } from "./maps";
+import { describeRules, presetById } from "./presets";
 import { useRealtime } from "./realtime";
 import { play, type SoundName } from "./sound";
 import {
@@ -167,7 +168,7 @@ export default function MatchRoom({ matchId, user, onBack }: { matchId: string; 
           <Text className="section-label" fontFamily="mono" fontSize="xs">{pickedMap ? `MAPA · ${mapName(pickedMap)}` : "SALA DA PARTIDA"}</Text>
           <Heading as="h1" className="room-title" size="3xl">{match.name}</Heading>
           <Text fontFamily="mono" fontSize="xs" mt="1">
-            {match.format === "bo3" ? "MD3" : "MD1"} · MR{match.maxRounds} · {match.id.slice(0, 8)}
+            {match.format === "bo3" ? "MD3" : "MD1"} · {presetById(match.preset).title.toUpperCase()} · {describeRules(match)}
           </Text>
         </Box>
         <HStack gap="2">
