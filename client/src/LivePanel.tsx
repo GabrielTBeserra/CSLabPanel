@@ -3,7 +3,7 @@ import { Badge, Box, Button, Flex, Grid, HStack, Stack, Text } from "@chakra-ui/
 import { serverStateLabel } from "./labels";
 import { mapName, mapThumb } from "./maps";
 import { play } from "./sound";
-import type { LivePlayer, MatchRecord } from "./services/api";
+import type { LivePlayer, MatchRecord, ServerCommand } from "./services/api";
 
 function Scoreboard({ title, side, players }: { title: string; side: "a" | "b"; players: LivePlayer[] }) {
   const sorted = [...players].sort((x, y) => y.kills - x.kills || x.deaths - y.deaths);
@@ -41,6 +41,7 @@ export default function LivePanel({
   onLoad,
   onEnd,
   onCopy,
+  onCommand,
 }: {
   match: MatchRecord;
   connectAddress: string | null;
@@ -49,6 +50,7 @@ export default function LivePanel({
   onLoad: () => void;
   onEnd: () => void;
   onCopy: (text: string) => void;
+  onCommand: (action: ServerCommand, round?: number) => void;
 }) {
   const live = match.live;
   const players = live.players ?? [];
@@ -81,6 +83,23 @@ export default function LivePanel({
         <HStack gap="2" wrap="wrap">
           {canManage && (state === "idle" || state === "error") && match.phase === "live" ? (
             <Button className="primary-button" onClick={onLoad} size="xs">{state === "error" ? "TENTAR DE NOVO" : "CARREGAR NO SERVIDOR"}</Button>
+          ) : null}
+          {isStaff && onServer && state !== "loading" ? (
+            <>
+              {state === "warmup" ? <Button className="primary-button" onClick={() => onCommand("forcestart")} size="xs">FORÇAR INÍCIO</Button> : null}
+              {state === "live" ? <Button className="ghost-button" onClick={() => onCommand("pause")} size="xs">PAUSAR</Button> : null}
+              {state === "paused" ? <Button className="primary-button" onClick={() => onCommand("unpause")} size="xs">DESPAUSAR</Button> : null}
+              {state === "live" || state === "paused" ? (
+                <Button
+                  className="ghost-button"
+                  onClick={() => {
+                    const value = window.prompt("Restaurar qual round? (o round atual é " + (live.round ?? 0) + ")", String(Math.max((live.round ?? 1) - 1, 0)));
+                    if (value !== null && /^\d+$/.test(value.trim())) onCommand("restore", Number(value.trim()));
+                  }}
+                  size="xs"
+                >RESTAURAR ROUND</Button>
+              ) : null}
+            </>
           ) : null}
           {isStaff && onServer ? (
             <Button className="danger-button" onClick={onEnd} size="xs">ENCERRAR NO SERVIDOR</Button>

@@ -579,6 +579,39 @@ export const buildServer = ({
     return result.ok ? { loading: true } : reply.code(409).send({ error: { code: "SERVER_LOAD_FAILED", message: result.error } });
   });
 
+  app.post(
+    "/api/matches/:id/server/command",
+    {
+      onRequest: requireStaff,
+      schema: {
+        body: {
+          type: "object",
+          additionalProperties: false,
+          required: ["action"],
+          properties: {
+            action: { type: "string", enum: ["pause", "unpause", "forcestart", "restore"] },
+            round: { type: "integer", minimum: 0, maximum: 60 },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!database) return reply.code(503).send(databaseUnavailable);
+      if (!rcon) return reply.code(503).send({ error: { code: "SERVER_NOT_CONFIGURED", message: "CS2 server integration unavailable" } });
+      const { id } = request.params as { id: string };
+      const { action, round } = request.body as { action: "pause" | "unpause" | "forcestart" | "restore"; round?: number };
+      const match = await database.getMatchById(id);
+      if (!match) return reply.code(404).send(notFound);
+      if (!["warmup", "live", "paused", "map_end"].includes(match.serverState)) {
+        return reply.code(409).send({ error: { code: "NOT_ON_SERVER", message: "Match is not running on the server" } });
+      }
+      if (action === "restore" && round === undefined) return reply.code(400).send(invalidRequest);
+      const command = { pause: "css_forcepause", unpause: "css_forceunpause", forcestart: "css_start", restore: `css_restore ${round}` }[action];
+      await sendRcon(rcon, command);
+      return { sent: true, action };
+    },
+  );
+
   app.post("/api/matches/:id/server/end", { onRequest: requireStaff }, async (request, reply) => {
     if (!database) return reply.code(503).send(databaseUnavailable);
     const { id } = request.params as { id: string };

@@ -221,6 +221,11 @@ export const deleteMatch = (matchId: string) =>
 export const loadMatchOnServer = (matchId: string) =>
   request<{ loading: boolean }>(`/matches/${matchId}/server/load`, { method: "POST" });
 
+export type ServerCommand = "pause" | "unpause" | "forcestart" | "restore";
+
+export const sendServerCommand = (matchId: string, action: ServerCommand, round?: number) =>
+  request<{ sent: boolean }>(`/matches/${matchId}/server/command`, { method: "POST", body: JSON.stringify(round === undefined ? { action } : { action, round }) });
+
 export const endMatchOnServer = (matchId: string) =>
   request<{ ended: boolean }>(`/matches/${matchId}/server/end`, { method: "POST" });
 

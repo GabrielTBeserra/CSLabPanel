@@ -10,6 +10,7 @@ import {
   endMatchOnServer,
   getMatch,
   loadMatchOnServer,
+  sendServerCommand,
   inviteToMatch,
   isStaff,
   sendVeto,
@@ -324,6 +325,11 @@ export default function MatchRoom({ matchId, user, onBack }: { matchId: string; 
             void act(() => endMatchOnServer(match.id), "Partida encerrada no servidor.", "start");
           }}
           onLoad={() => void act(() => loadMatchOnServer(match.id), "Carregando a partida no servidor…", "start")}
+          onCommand={(action, round) => void act(
+            () => sendServerCommand(match.id, action, round),
+            { pause: "Partida pausada.", unpause: "Partida despausada.", forcestart: "Início forçado.", restore: `Restaurando o round ${round}.` }[action],
+            "click",
+          )}
         />
       ) : null}
 
